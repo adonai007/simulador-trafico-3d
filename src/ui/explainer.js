@@ -35,6 +35,18 @@ const SECTIONS = [
       'avenida y observa la coordinación.',
   },
   {
+    title: 'Micros y paradas',
+    html:
+      'Los <b>micros</b> (12% de la flota) sirven paradas reales de OSM ' +
+      '(<code>highway=bus_stop</code>; 7 en la zona por defecto, marcadas ' +
+      'con poste y banca). Al entrar a una calle con parada, el micro decide ' +
+      'servirla con probabilidad 0.85, frena hacia ella con el mismo IDM y ' +
+      'se detiene entre 8 y 25 s (media configurable con «Parada media»). ' +
+      'Mientras tanto bloquea su carril: los demás hacen cola o lo adelantan ' +
+      'por la izquierda vía MOBIL — el clásico cuello de botella paceño. ' +
+      'Desactívalas con «Paradas de micro» y compara el flujo.',
+  },
+  {
     title: 'Ondas de choque (stop-and-go)',
     html:
       'Cuando la densidad es alta, una pequeña frenada se <b>amplifica hacia ' +
@@ -52,6 +64,30 @@ const SECTIONS = [
       '⇒ más flujo (<b>rama libre</b>). Pasado el punto crítico, añadir ' +
       'vehículos reduce el flujo (<b>rama congestionada</b>): la capacidad de ' +
       'la vía es el pico de la curva.',
+  },
+  {
+    title: 'Mapa de calor de congestión',
+    html:
+      'Activa <b>Mapa de calor</b> (carpeta Vista) para pintar cada calle ' +
+      'según su <b>velocidad relativa</b>: la velocidad media de sus ' +
+      'vehículos dividida por el límite de la vía, suavizada con una media ' +
+      'exponencial (τ ≈ 5 s). <b>Verde</b> = flujo libre (≥ 80 %), ' +
+      '<b>amarillo</b> = circulación densa, <b>rojo</b> = atasco (≤ 20 %). ' +
+      'En calles de doble sentido se muestra el sentido más congestionado y ' +
+      'los cruces conservan el color del asfalto. Sube la demanda y observa ' +
+      'cómo el rojo se propaga hacia atrás desde los semáforos.',
+  },
+  {
+    title: 'Diagrama espacio-tiempo',
+    html:
+      'El segundo gráfico traza la <b>trayectoria</b> de cada vehículo sobre ' +
+      'el corredor principal de la red (la vía continua más larga, indicada ' +
+      'en el título): eje x = tiempo, eje y = distancia recorrida. Cada ' +
+      'punto se colorea por velocidad (verde = fluido, rojo = detenido). ' +
+      'Líneas inclinadas = avance (más pendiente ⇒ más rápido); escalones ' +
+      'horizontales = colas. Con congestión, las <b>bandas rojas se ' +
+      'desplazan en diagonal hacia atrás</b>: son las ondas de choque ' +
+      'viajando contracorriente.',
   },
   {
     title: 'Experimentos sugeridos',

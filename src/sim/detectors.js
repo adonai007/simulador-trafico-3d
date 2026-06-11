@@ -9,8 +9,13 @@
 // Exposed shape (consumed by UI builder):
 //   metrics = {
 //     global: { vehicles, meanSpeedKmh, densityVehKm, flowVehHLane, time },
-//     detectorPoints: [{ edgeId, k, q, vKmh }, ...]   // veh/km/lane, veh/h/lane
+//     detectorPoints: [{ edgeId, k, q, vKmh }, ...],  // veh/km/lane, veh/h/lane
+//     minSpeedRatio,   // F3: min over edges of the speed-ratio EWMA (1 = free)
 //   }
+//
+// F3 congestion heatmap: every edge carries `_speedRatio`, an EWMA (tau ~5 s)
+// of mean-vehicle-speed / edge.speedMs, updated on the same 0.5 s hud gate and
+// consumed by render/roadMesh.js updateHeatmap().
 //
 // Crossing detection is done by the sim integrate loop via the `_det`/`_detS`
 // fields this module attaches to every lane (null on non-detector segments to
@@ -32,6 +37,17 @@ export function createDetectors(network) {
   for (const c of network.connectors.values()) {
     c._det = null;
     c._detS = 0;
+  }
+
+  // F3 — per-edge speed-ratio EWMA driving the congestion heatmap. Plain
+  // array snapshot so the 0.5 s tick iterates alloc-free (no Map iterator);
+  // tau ~5 s smooths signal-cycle flicker. CONFIG.heatmap may be absent until
+  // the integration pass -> local defaults via ??.
+  const ratioK = Math.min(1, cfg.hudIntervalS / (CONFIG.heatmap?.tauS ?? 5));
+  const edgeList = [];
+  for (const e of network.edges.values()) {
+    e._speedRatio = 1;
+    edgeList.push(e);
   }
 
   // Pick the longest INTERIOR edges (junction at both ends, by trimmed lane
@@ -82,6 +98,7 @@ export function createDetectors(network) {
   const metrics = {
     global: { vehicles: 0, meanSpeedKmh: 0, densityVehKm: 0, flowVehHLane: 0, time: 0 },
     detectorPoints,
+    minSpeedRatio: 1, // F3 (stable shape; updated each hud tick)
   };
 
   /** Record a midpoint crossing (called from the sim integrate loop). */
@@ -133,6 +150,32 @@ export function createDetectors(network) {
     }
   }
 
+  /**
+   * F3 — relax every edge's `_speedRatio` toward (mean vehicle speed on its
+   * lanes / edge.speedMs); empty edges relax back to 1 (free flow). Indexed
+   * loops over plain arrays: O(edges + vehicles), zero alloc. A ratio can
+   * transiently exceed 1 (v0 jitter, downhill boost) — the heatmap ramp
+   * treats everything >= the green threshold as green.
+   */
+  function computeEdgeSpeedRatios() {
+    let minRatio = 1;
+    for (let i = 0; i < edgeList.length; i++) {
+      const e = edgeList[i];
+      const lanes = e.lanes;
+      let count = 0;
+      let vSum = 0;
+      for (let j = 0; j < lanes.length; j++) {
+        const vehs = lanes[j].vehicles;
+        for (let v = 0; v < vehs.length; v++) vSum += vehs[v].v;
+        count += vehs.length;
+      }
+      const target = count ? vSum / count / e.speedMs : 1;
+      e._speedRatio += ratioK * (target - e._speedRatio);
+      if (e._speedRatio < minRatio) minRatio = e._speedRatio;
+    }
+    metrics.minSpeedRatio = minRatio;
+  }
+
   function computeGlobal(time, vehicles, totalLaneKm) {
     let vSum = 0;
     for (let i = 0; i < vehicles.length; i++) vSum += vehicles[i].v;
@@ -158,6 +201,7 @@ export function createDetectors(network) {
     if (time >= nextHud) {
       nextHud = time + cfg.hudIntervalS;
       sampleOccupancy();
+      computeEdgeSpeedRatios();
       computeGlobal(time, vehicles, totalLaneKm);
     }
   }

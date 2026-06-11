@@ -10,15 +10,23 @@
 import { CONFIG } from '../config.js';
 import { clamp } from '../util/math2d.js';
 
-/** Highway whitelist query — `around` radius, recursed nodes WITH tags. */
+/**
+ * Highway whitelist query — `around` radius, recursed nodes WITH tags.
+ * Unions standalone highway=bus_stop nodes (F2): stops mapped BESIDE the road
+ * are not way members, so way recursion alone would miss them.
+ */
 export function buildHighwayQuery(lat, lon, radiusM) {
   const classes = CONFIG.highwayWhitelist.join('|');
+  const r = Math.round(radiusM);
   return (
     `[out:json][timeout:30];` +
-    `way(around:${Math.round(radiusM)},${lat},${lon})` +
+    `(` +
+    `way(around:${r},${lat},${lon})` +
     `["highway"~"^(${classes})$"]` +
     `["area"!="yes"]` +
     `["access"!~"^(private|no)$"];` +
+    `node(around:${r},${lat},${lon})["highway"="bus_stop"];` +
+    `);` +
     `(._;>;);out body;`
   );
 }

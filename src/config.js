@@ -102,13 +102,42 @@ export const CONFIG = {
   vehicleMix: {
     sedan: 0.30, hatchback: 0.25, suv: 0.15, taxi: 0.10, micro: 0.12, camion: 0.08,
   },
+  // gradeFactor scales gravity's pull on slopes (F1): heavy/underpowered
+  // vehicles feel hills more (camión crawls uphill), nimble cars barely notice.
   vehicleTypes: {
-    sedan:     { lengthM: 4.5,  widthM: 1.8, v0Factor: 1.0,  accelFactor: 1.0 },
-    hatchback: { lengthM: 3.9,  widthM: 1.75, v0Factor: 1.15, accelFactor: 1.3 }, // nimble class
-    suv:       { lengthM: 4.7,  widthM: 1.95, v0Factor: 1.05, accelFactor: 0.95 },
-    taxi:      { lengthM: 4.5,  widthM: 1.8, v0Factor: 1.1,  accelFactor: 1.15 },
-    micro:     { lengthM: 7.0,  widthM: 2.3, v0Factor: 0.85, accelFactor: 0.65 }, // micro paceño
-    camion:    { lengthM: 10.0, widthM: 2.5, v0Factor: 0.8,  accelFactor: 0.55 },
+    sedan:     { lengthM: 4.5,  widthM: 1.8, v0Factor: 1.0,  accelFactor: 1.0,  gradeFactor: 0.6 },
+    hatchback: { lengthM: 3.9,  widthM: 1.75, v0Factor: 1.15, accelFactor: 1.3,  gradeFactor: 0.55 }, // nimble class
+    suv:       { lengthM: 4.7,  widthM: 1.95, v0Factor: 1.05, accelFactor: 0.95, gradeFactor: 0.7 },
+    taxi:      { lengthM: 4.5,  widthM: 1.8, v0Factor: 1.1,  accelFactor: 1.15, gradeFactor: 0.6 },
+    micro:     { lengthM: 7.0,  widthM: 2.3, v0Factor: 0.85, accelFactor: 0.65, gradeFactor: 0.9 }, // micro paceño
+    camion:    { lengthM: 10.0, widthM: 2.5, v0Factor: 0.8,  accelFactor: 0.55, gradeFactor: 1.0 },
+  },
+
+  // ---- Real elevation / grades (F1) ----
+  elevation: {
+    apiUrl: 'https://api.open-meteo.com/v1/elevation',
+    batchSize: 100,
+    concurrency: 4,
+    fetchTimeoutMs: 10000,
+    gridStepM: 50,
+    gridMaxPoints: 48,        // clamp grid to 48x48
+    smoothWindowM: 30,        // moving-average window along edge profiles
+    maxGrade: 0.15,           // |de/ds| clamp on edge/lane profiles
+    junctionPlateauM: 12,     // ease profile ends to node.elev over this length
+    terrainSegments: 96,      // terrain plane subdivisions per axis
+    terrainDropM: 0.5,        // road-splat: terrain pulled to roadElev - drop
+    gradeAccelClamp: { min: -3.0, max: 1.2 }, // m/s² added to IDM accel
+    gradeLowGearMs: 6.0,      // uphill pull ramps in over [0, this] m/s ("low gear")
+  },
+
+  // ---- Bus stops (F2) ----
+  busStops: {
+    enabled: true,        // GUI "Paradas de micro"
+    maxSnapDistM: 25,     // OSM bus_stop node -> curbside lane snap radius
+    meanDwellS: 12,       // exponential dwell mean (GUI "Parada media (s)")
+    minDwellS: 8,         // dwell sample clamp
+    maxDwellS: 25,
+    stopProb: 0.85,       // chance a micro serves the next stop on its lane
   },
 
   // ---- Simulation core (Phase 3/4) ----
@@ -149,6 +178,23 @@ export const CONFIG = {
     slideS: 5,
     hudIntervalS: 0.5,
     chartMaxPoints: 300,
+  },
+
+  // ---- Diagrama espacio-tiempo (F4) ----
+  spaceTime: {
+    windowS: 300,    // sliding x-axis window (sim seconds)
+    capacity: 36000, // trajectory ring buffer (~300 s x ~120 veh at 1 Hz)
+    sampleS: 1.0,    // sim-s between trajectory samples
+  },
+
+  // ---- Congestion heatmap (F3) ----
+  heatmap: {
+    enabled: false,     // initial "Mapa de calor" checkbox state
+    tauS: 5,            // EWMA time constant for edge speed ratios (sim s)
+    updateHz: 1,        // wall-clock repaint rate while enabled
+    greenRatio: 0.8,    // speed ratio >= this -> green (free flow)
+    yellowRatio: 0.45,  // mid-ramp anchor (yellow)
+    redRatio: 0.2,      // speed ratio <= this -> red (jammed)
   },
 
   // ---- Rendering ----

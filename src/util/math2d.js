@@ -172,6 +172,68 @@ export function pointAtParam(points, cumLen, s, out) {
 }
 
 /**
+ * 3D point at arc length s along a polyline with a parallel elevation table
+ * (elev[i] = height at points[i]). ONE binary search; elev === null -> y = 0.
+ * Writes into `out` {x, y, z} when provided (zero-alloc hot path).
+ */
+export function pointAtParam3(points, cumLen, elev, s, out) {
+  const res = out || { x: 0, y: 0, z: 0 };
+  const total = cumLen[cumLen.length - 1];
+  if (s <= 0) {
+    res.x = points[0].x;
+    res.y = elev === null ? 0 : elev[0];
+    res.z = points[0].z;
+    return res;
+  }
+  if (s >= total) {
+    const last = points.length - 1;
+    res.x = points[last].x;
+    res.y = elev === null ? 0 : elev[last];
+    res.z = points[last].z;
+    return res;
+  }
+  let lo = 0;
+  let hi = cumLen.length - 1;
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cumLen[mid] <= s) lo = mid;
+    else hi = mid;
+  }
+  const segLen = cumLen[hi] - cumLen[lo] || 1;
+  const t = (s - cumLen[lo]) / segLen;
+  res.x = lerp(points[lo].x, points[hi].x, t);
+  res.y = elev === null ? 0 : lerp(elev[lo], elev[hi], t);
+  res.z = lerp(points[lo].z, points[hi].z, t);
+  return res;
+}
+
+/**
+ * Signed forward slope (de/ds, + = uphill in travel direction) at arc length s
+ * over a polyline with parallel elevation table. Same binary search as
+ * pointAtParam3; piecewise-constant per segment. Zero allocations.
+ */
+export function gradeAtParam(cumLen, elev, s) {
+  const total = cumLen[cumLen.length - 1];
+  let lo = 0;
+  let hi = cumLen.length - 1;
+  if (s <= 0) {
+    hi = 1;
+  } else if (s >= total) {
+    lo = cumLen.length - 2;
+    hi = cumLen.length - 1;
+  } else {
+    while (lo + 1 < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cumLen[mid] <= s) lo = mid;
+      else hi = mid;
+    }
+  }
+  const ds = cumLen[hi] - cumLen[lo];
+  if (ds <= 1e-6) return 0;
+  return (elev[hi] - elev[lo]) / ds;
+}
+
+/**
  * Unit heading at arc length s along a polyline. Writes into `out` when given.
  */
 export function headingAtParam(points, cumLen, s, out) {
@@ -260,4 +322,35 @@ export function circumradius(a, b, c) {
   ); // = 2 * triangle area
   if (area2 < 1e-9) return Infinity;
   return (ab * bc * ca) / (2 * area2);
+}
+
+/**
+ * Project a point {x, z} onto a polyline (F2 bus-stop snapping). Returns a
+ * NEW `{s, dist}` object — s = arc length of the closest point on the
+ * polyline, dist = distance from p to it. Build-time helper (allocates its
+ * result); not for per-frame hot loops.
+ */
+export function projectPointToPolyline(points, cumLen, p) {
+  let bestD2 = Infinity;
+  let bestS = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    const abx = b.x - a.x;
+    const abz = b.z - a.z;
+    const len2 = abx * abx + abz * abz;
+    let t = 0;
+    if (len2 > 1e-12) {
+      t = ((p.x - a.x) * abx + (p.z - a.z) * abz) / len2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+    }
+    const qx = a.x + abx * t - p.x;
+    const qz = a.z + abz * t - p.z;
+    const d2 = qx * qx + qz * qz;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      bestS = cumLen[i] + Math.sqrt(len2) * t;
+    }
+  }
+  return { s: bestS, dist: Math.sqrt(bestD2) };
 }

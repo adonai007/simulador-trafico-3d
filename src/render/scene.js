@@ -98,6 +98,10 @@ export function createScene(container, bbox) {
     controls,
     sun,
     frame,
+    /** Hide the flat ground when a per-world terrain mesh replaces it (F1). */
+    setGroundVisible(v) {
+      ground.visible = !!v;
+    },
     render() {
       renderer.render(scene, camera);
     },

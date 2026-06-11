@@ -24,6 +24,9 @@ export function createGui(app) {
     sombras: !!app.view.sun.castShadow,
     verCarriles: !!CONFIG.debug.showLanes,
     verConectores: !!CONFIG.debug.showConnectors,
+    paradasMicro: CONFIG.busStops.enabled,
+    paradaMediaS: CONFIG.busStops.meanDwellS,
+    mapaCalor: !!CONFIG.heatmap.enabled,
   };
 
   const retime = () =>
@@ -56,6 +59,18 @@ export function createGui(app) {
     .onChange((v) => {
       CONFIG.sim.mobil.politeness = v;
     });
+  gui
+    .add(params, 'paradasMicro')
+    .name('Paradas de micro')
+    .onChange((v) => {
+      CONFIG.busStops.enabled = v;
+    });
+  gui
+    .add(params, 'paradaMediaS', 5, 30, 1)
+    .name('Parada media (s)')
+    .onChange((v) => {
+      CONFIG.busStops.meanDwellS = v;
+    });
 
   // --- Semáforos ---
   const fSig = gui.addFolder('Semáforos');
@@ -84,6 +99,10 @@ export function createGui(app) {
     .add(params, 'verConectores')
     .name('Conectores (debug)')
     .onChange((v) => app.world.debug.setConnectorsVisible(v));
+  fView
+    .add(params, 'mapaCalor')
+    .name('Mapa de calor')
+    .onChange((v) => app.world.roads.setHeatmap(v));
   fView.close();
 
   return {
@@ -97,6 +116,7 @@ export function createGui(app) {
       retimeSignals(world.network, world.network.signals, params.cicloS);
       world.debug.setLanesVisible(params.verCarriles);
       world.debug.setConnectorsVisible(params.verConectores);
+      world.roads.setHeatmap(params.mapaCalor);
     },
     dispose() {
       gui.destroy();

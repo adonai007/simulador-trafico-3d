@@ -4,7 +4,10 @@
 //
 //   ctx (caller-owned scratch object, reused per call — zero allocations):
 //     edge      current edge (lanes[] indexed left->right, 0 = innermost)
-//     aSelf     vehicle's current pure car-following accel (no signal/conflict)
+//     aSelf     vehicle's current pure car-following accel (no signal/conflict;
+//               INCLUDES the grade term — see aGrade)
+//     aGrade    grade accel term (F1): added to aNew so the incentive
+//               comparison stays symmetric (sibling lanes share the profile)
 //     leader    current-lane leader vehicle or null
 //     follower  current-lane follower vehicle or null
 //
@@ -69,7 +72,7 @@ function evaluateLane(veh, target, ctx, mandatory) {
   }
 
   const v0T = target.speedMs * veh.v0Factor;
-  const aNew = idmAccel(veh.v, v0T, gapLead, veh.v - leadV, veh.idm);
+  const aNew = idmAccel(veh.v, v0T, gapLead, veh.v - leadV, veh.idm) + ctx.aGrade;
 
   // New follower: safety + imposed loss.
   let folLoss = 0;

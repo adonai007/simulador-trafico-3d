@@ -90,19 +90,24 @@ function normalizeWay(way) {
  * Overpass JSON -> {
  *   nodes: Map(id -> {id, lat, lon, tags}),
  *   ways:  [{id, nodeRefs[], highwayClass, oneway, lanesFwd, lanesBwd, speedMs, tags}],
- *   signalNodeIds: Set(id)   // nodes tagged highway=traffic_signals
+ *   signalNodeIds: Set(id),  // nodes tagged highway=traffic_signals
+ *   busStopNodes: [{id, lat, lon, tags}]  // nodes tagged highway=bus_stop (F2)
  * }
  */
 export function parseOsm(json) {
   const nodes = new Map();
   const ways = [];
   const signalNodeIds = new Set();
+  const busStopNodes = [];
   const elements = json?.elements || [];
 
   for (const el of elements) {
     if (el.type === 'node') {
       nodes.set(el.id, { id: el.id, lat: el.lat, lon: el.lon, tags: el.tags });
       if (el.tags && el.tags.highway === 'traffic_signals') signalNodeIds.add(el.id);
+      if (el.tags && el.tags.highway === 'bus_stop') {
+        busStopNodes.push({ id: el.id, lat: el.lat, lon: el.lon, tags: el.tags });
+      }
     }
   }
   for (const el of elements) {
@@ -121,5 +126,5 @@ export function parseOsm(json) {
     ways.push(w);
   }
 
-  return { nodes, ways, signalNodeIds };
+  return { nodes, ways, signalNodeIds, busStopNodes };
 }

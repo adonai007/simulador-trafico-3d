@@ -5,12 +5,15 @@
 // because conflict registration needs signal groups. Documented in Deviations.
 
 import { createProjection } from '../geo/projection.js';
+import { FLAT_SAMPLER } from '../geo/elevation.js';
 import { parseOsm } from '../osm/parse.js';
 import { buildGraph } from './graph.js';
 import { buildLanes } from './lanes.js';
 import { buildSignals } from './signals.js';
 import { buildConnectors } from './connectors.js';
 import { buildRouting } from './routing.js';
+import { buildBusStops } from './busStops.js';
+import { applyElevation } from './elevation.js';
 
 /**
  * Network object shape (stable contract for sim/UI builders):
@@ -24,13 +27,18 @@ import { buildRouting } from './routing.js';
  *   signals: Map(junctionId -> {junctionId, groups: Map(edgeId->'NS'|'EW'), plan}),
  *   nodeRadii: Map(nodeId -> R_node meters),
  *   entries: [{nodeId, edgeId, weight}], exits: [...], spawnMode,
- *   routing, bbox: {minX,maxX,minZ,maxZ}, totalLaneKm, dispose()
+ *   routing, bbox: {minX,maxX,minZ,maxZ}, totalLaneKm, dispose(),
+ *   busStops: [{id, laneId, lane, s, name}]  // F2; lane.busStops = ascending-s array | null
  * }
  * Lane API: {id, edgeId, index, length, points, cumLen, vehicles[],
- *            outConnectors[], speedMs, pointAt(s,out?), headingAt(s,out?)}
+ *            outConnectors[], speedMs, elev (Float32Array|null),
+ *            pointAt(s,out?), headingAt(s,out?), posAt(s,out?) -> {x,y,z},
+ *            gradeAt(s) -> signed forward slope}
  * Stop line = lane end (s = lane.length).
+ * `sampler` (F1): elevation sampler from src/geo/elevation.js — defaults to
+ * FLAT_SAMPLER (y = 0 everywhere). Exposed as network.elevation.
  */
-export function buildNetwork(osmJson, center) {
+export function buildNetwork(osmJson, center, sampler = FLAT_SAMPLER) {
   const projection = createProjection(center.lat, center.lon);
   const parsed = parseOsm(osmJson);
   const graph = buildGraph(parsed, projection);
@@ -38,6 +46,10 @@ export function buildNetwork(osmJson, center) {
   const signals = buildSignals(graph, parsed, projection);
   const connectors = buildConnectors(graph, signals);
   const routing = buildRouting(graph);
+  applyElevation(graph, lanes, connectors, sampler);
+  // F2: must run after buildConnectors — stamps the stable-shape `busStops`
+  // default (null) onto every lane AND connector before sim/render touch them.
+  const busStops = buildBusStops(graph, parsed, projection, connectors);
 
   let totalLaneM = 0;
   for (const lane of lanes.values()) totalLaneM += lane.length;
@@ -55,6 +67,8 @@ export function buildNetwork(osmJson, center) {
     exits: graph.exits,
     spawnMode: graph.spawnMode,
     routing,
+    busStops,
+    elevation: sampler,
     bbox: graph.bbox,
     totalLaneKm: totalLaneM / 1000,
     dispose() {

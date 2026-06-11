@@ -85,8 +85,15 @@ export function createVehicle(rng, lane, type) {
     mandatory: 0, // mandatory lane-change direction: -1 left, +1 right, 0 none
     tripDist: 0,
     tripMax: Infinity, // onNetwork despawn budget (exp-distributed)
+    gradeFactor: spec.gradeFactor ?? 0.6, // slope sensitivity (F1)
+    // --- bus stops (F2) ---
+    isMicro: type === 'micro', // cached bool for the stop-logic hot path
+    nextStopS: -1, // arc s of the next bus stop to serve on this lane (-1 = none)
+    nextStopIdx: -1, // index into seg.busStops for that stop
+    dwellUntil: -1, // sim time until which the micro dwells at a stop
     // --- per-step scratch (stable shape, no allocations in step()) ---
     _a: 0,
+    _aGrade: 0, // grade accel term this step (F1; shared with MOBIL ctx)
     _blocked: false, // conflict-blocked this step (feeds deadlock breaker)
     _lcTo: null, // lane-change target chosen this step
     blockT: 0, // seconds spent conflict-blocked at ~standstill

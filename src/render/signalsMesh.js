@@ -28,7 +28,7 @@ export function createSignalsMesh(network) {
       const edge = network.edges.get(edgeId);
       if (!edge || !edge.lanes.length) continue;
       const lane = edge.lanes[edge.lanes.length - 1]; // rightmost lane
-      const end = lane.pointAt(lane.length);
+      const end = lane.posAt(lane.length); // {x,y,z} — pole base at lane-end elevation (F1)
       const h = lane.headingAt(lane.length);
       // Pole offset to the right of the rightmost lane.
       const off = W / 2 + R.signalPoleOffsetM;
@@ -36,6 +36,7 @@ export function createSignalsMesh(network) {
         sig,
         group: sigGroup,
         x: end.x + -h.z * off,
+        y: end.y,
         z: end.z + h.x * off,
         // Head faces back toward oncoming traffic: forward = -headIn.
         fx: -h.x,
@@ -69,12 +70,12 @@ export function createSignalsMesh(network) {
     _fwd.set(a.fx, 0, a.fz);
     _right.crossVectors(_up, _fwd);
     _m.makeBasis(_right, _up, _fwd);
-    _m.setPosition(a.x, 0, a.z);
+    _m.setPosition(a.x, a.y, a.z);
     staticMesh.setMatrixAt(i, _m);
     // Lamp on the housing front (local +Z of the head), near the top.
     _m.setPosition(
       a.x + a.fx * 0.34,
-      R.signalPoleHeightM - 0.4,
+      a.y + R.signalPoleHeightM - 0.4,
       a.z + a.fz * 0.34
     );
     lampMesh.setMatrixAt(i, _m);

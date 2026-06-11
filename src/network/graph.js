@@ -49,6 +49,7 @@ function splitWays(parsed, projection) {
           speedMs: way.speedMs,
           highwayClass: way.highwayClass,
           wayId: way.id,
+          name: way.tags?.name ?? null, // street name (F4 corridor grouping)
         });
       }
       startIdx = i;
@@ -126,6 +127,7 @@ function collapseDegree2(segments, parsed) {
       // Merge b into a.
       a.points = dedupePolyline(a.points.concat(b.points.slice(1)));
       a.toNode = b.toNode;
+      if (a.name == null) a.name = b.name; // keep a street name when either half has one (F4)
       segments.delete(b.id);
       segIds.clear();
       nodeSegs.delete(nodeId);
@@ -207,6 +209,7 @@ function emitDirectedEdges(segments) {
       oneway: seg.oneway,
       twinId: null,
       wayId: seg.wayId,
+      name: seg.name ?? null, // street name (F4)
       lanes: [], // filled by lanes.js
     };
     edges.set(fwdId, fwd);
@@ -224,6 +227,7 @@ function emitDirectedEdges(segments) {
         oneway: false,
         twinId: fwdId,
         wayId: seg.wayId,
+        name: seg.name ?? null, // street name (F4)
         lanes: [],
       };
       fwd.twinId = bwdId;

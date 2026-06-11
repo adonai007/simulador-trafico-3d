@@ -125,6 +125,41 @@ export function createSimulation(network) {
     return outs[0];
   }
 
+  // ---- Bus stops (F2) ----
+  // CONFIG.busStops may be absent until the integration pass wires config.js;
+  // the local default keeps this module green (?? picks the real object once
+  // present, so GUI mutations of CONFIG.busStops apply live).
+  const busCfg = CONFIG.busStops ?? {
+    enabled: true,
+    meanDwellS: 12,
+    minDwellS: 8,
+    maxDwellS: 25,
+    stopProb: 0.85,
+  };
+
+  /**
+   * Bus-stop choice on lane entry (F2): a micro serves the FIRST stop ahead
+   * (s > veh.s + 5) with probability stopProb — one rng draw per lane entry.
+   * lane.busStops is null (or undefined pre-integration) when the lane has none.
+   */
+  function pickNextStop(veh, lane) {
+    veh.nextStopS = -1;
+    veh.nextStopIdx = -1;
+    if (!veh.isMicro || !busCfg.enabled) return;
+    const stops = lane.busStops;
+    if (!stops) return;
+    const minS = veh.s + 5;
+    for (let i = 0; i < stops.length; i++) {
+      if (stops[i].s > minS) {
+        if (rng.next() < busCfg.stopProb) {
+          veh.nextStopS = stops[i].s;
+          veh.nextStopIdx = i;
+        }
+        return;
+      }
+    }
+  }
+
   /**
    * On entering a real lane: cache the next connector along the route.
    * No connector from THIS lane to the route edge -> mandatory-change flag
@@ -134,6 +169,7 @@ export function createSimulation(network) {
     veh.mandatory = 0;
     veh.blockT = 0;
     veh.ignoreCount = 0;
+    pickNextStop(veh, lane); // F2 — also re-rolled after lane changes
     const outs = lane.outConnectors;
     if (!outs.length) {
       veh.nextConn = null; // exit stub / dead end -> despawn at lane end
@@ -197,6 +233,8 @@ export function createSimulation(network) {
       veh.mandatory = 0;
       veh.blockT = 0;
       veh.ignoreCount = 0;
+      veh.nextStopS = -1; // bus stops live on real lanes only (F2)
+      veh.nextStopIdx = -1;
     }
   }
 
@@ -282,8 +320,19 @@ export function createSimulation(network) {
   }
 
   // ---- Per-vehicle decision (returns pure car-following accel for MOBIL) ----
+  const gradeClamp = CONFIG.elevation.gradeAccelClamp;
+  const gradeLowGearMs = CONFIG.elevation.gradeLowGearMs;
+
   function decide(veh, leader) {
     veh._blocked = false;
+    // Dwelling at a bus stop (F2): pin an exact standstill and return early —
+    // every other term skipped. _blocked stays false on purpose (followers
+    // queue or overtake via MOBIL; the deadlock breaker must NOT fire).
+    // Toggle-off (busCfg.enabled = false) releases dwellers immediately.
+    if (veh.isMicro && busCfg.enabled && time < veh.dwellUntil) {
+      veh._a = Math.max(-5, -veh.v / simCfg.dt);
+      return veh._a;
+    }
     const v0 = veh.seg.speedMs * veh.v0Factor;
     let gap = Infinity;
     let dv = 0;
@@ -298,7 +347,23 @@ export function createSimulation(network) {
         dv = _look.dv;
       }
     }
-    const aCar = idmAccel(veh.v, v0, gap, dv, veh.idm);
+    // Grade term (F1): gravity along the slope, scaled per type. Applied to
+    // the BASE accel before the restrictive min() terms. Uphill pull ramps in
+    // with speed ("low gear": full engine torque at launch, full gravity pull
+    // at cruise) — queue discharge keeps working on hills and vehicles never
+    // stall; instead they settle at a slow crawl equilibrium (camión ~11 km/h
+    // on a 15% street).
+    let aGrade = clamp(
+      -9.81 * veh.seg.gradeAt(veh.s) * veh.gradeFactor,
+      gradeClamp.min,
+      gradeClamp.max
+    );
+    if (aGrade < 0) {
+      const k = veh.v / gradeLowGearMs;
+      if (k < 1) aGrade *= k;
+    }
+    veh._aGrade = aGrade;
+    const aCar = idmAccel(veh.v, v0, gap, dv, veh.idm) + aGrade;
     let a = aCar;
 
     if (!veh.seg.isConnector && veh.nextConn) {
@@ -323,20 +388,59 @@ export function createSimulation(network) {
         if (distToStop < 10) veh._blocked = true; // waiting at lane end
       }
     }
+    // Bus-stop service (F2): brake for the chosen stop with the same
+    // restrictive-min IDM pattern; at the stop, start the dwell clock.
+    if (veh.nextStopS >= 0 && busCfg.enabled && !veh.seg.isConnector) {
+      const gapToStop = veh.nextStopS - veh.s - veh.len / 2;
+      if (gapToStop < -2) {
+        // Overshot (e.g. stop logic re-enabled mid-lane): skip this stop.
+        veh.nextStopS = -1;
+        veh.nextStopIdx = -1;
+      } else {
+        const aStop = idmAccel(veh.v, v0, Math.max(gapToStop, 0.05), veh.v, veh.idm);
+        if (aStop < a) a = aStop;
+        // Trigger is s0-aware: IDM's standing equilibrium leaves gap ≈ s0
+        // (~2 m, jittered) to the virtual obstacle, so a fixed 1.5 m
+        // threshold would never fire (measured: micros parked forever).
+        if (veh.v < 0.3 && gapToStop < veh.idm.s0 + 0.5) {
+          veh.dwellUntil =
+            time + clamp(rng.exp(busCfg.meanDwellS), busCfg.minDwellS, busCfg.maxDwellS);
+          // Advance to the next stop on this lane (rare: long streets).
+          const stops = veh.seg.busStops;
+          const ni = veh.nextStopIdx + 1;
+          if (stops && ni < stops.length) {
+            veh.nextStopIdx = ni;
+            veh.nextStopS = stops[ni].s;
+          } else {
+            veh.nextStopIdx = -1;
+            veh.nextStopS = -1;
+          }
+        }
+      }
+    }
     veh._a = a;
     return aCar;
   }
 
   // ---- MOBIL hook (§2.5) ----
-  const _mctx = { edge: null, aSelf: 0, leader: null, follower: null };
+  const _mctx = { edge: null, aSelf: 0, aGrade: 0, leader: null, follower: null };
 
   function maybeLaneChange(veh, seg, aCar, leader, follower) {
     if (time < veh.lcCooldownUntil) return;
+    // F2: no lane changes while dwelling or within 40 m of the chosen stop.
+    // (nextStopS/dwellUntil are -1 for non-micros — the guard is universal.)
+    if (
+      busCfg.enabled &&
+      (time < veh.dwellUntil || (veh.nextStopS >= 0 && veh.nextStopS - veh.s < 40))
+    ) {
+      return;
+    }
     const edge = seg._edge;
     if (edge.lanes.length < 2) return;
     if (veh.mandatory === 0 && veh.s >= seg.length - mobilCfg.minDistToLaneEndM) return;
     _mctx.edge = edge;
     _mctx.aSelf = aCar;
+    _mctx.aGrade = veh._aGrade; // sibling lanes share the longitudinal profile (F1)
     _mctx.leader = leader;
     _mctx.follower = follower;
     const target = mobilDecision(veh, _mctx);
@@ -538,8 +642,8 @@ export function createSimulation(network) {
     sampleVehicle() {
       if (!vehicles.length) return null;
       const veh = vehicles[0];
-      const p = veh.seg.pointAt(veh.s);
-      return { id: veh.id, x: p.x, z: p.z, v: veh.v, segId: veh.seg.id, s: veh.s };
+      const p = veh.seg.posAt(veh.s); // {x,y,z} — y = elevation (F1)
+      return { id: veh.id, x: p.x, y: p.y, z: p.z, v: veh.v, segId: veh.seg.id, s: veh.s };
     },
   };
 }

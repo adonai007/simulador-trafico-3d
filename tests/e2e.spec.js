@@ -142,4 +142,104 @@ test.describe('Simulador de Tráfico Urbano 3D', () => {
     const after = await page.evaluate(() => window.__SIM__.networkCenter);
     expect(after.lat).not.toBeCloseTo(before.lat, 4);
   });
+
+  test('6. micros paran en las paradas y el toggle las libera (F2)', async ({ page }) => {
+    test.setTimeout(180_000);
+    await gotoAndWaitReady(page);
+    // Red por defecto: 7 paradas ancladas a carriles.
+    expect(await page.evaluate(() => window.__SIM__.network.busStops.length)).toBe(7);
+    await page.evaluate(() => window.__SIM__.setSimSpeed(4));
+    // Algún micro queda detenido en parada (v<0.5 con dwell activo)...
+    await page.waitForFunction(
+      () => {
+        const sim = window.__SIM__.sim;
+        return sim.vehicles.some((x) => x.isMicro && x.v < 0.5 && sim.time < x.dwellUntil);
+      },
+      null,
+      { timeout: 90_000 }
+    );
+    // ...y más tarde reanuda la marcha (v>2).
+    await page.waitForFunction(
+      () => {
+        const sim = window.__SIM__.sim;
+        return sim.vehicles.some(
+          (x) => x.isMicro && x.dwellUntil > 0 && sim.time > x.dwellUntil && x.v > 2
+        );
+      },
+      null,
+      { timeout: 60_000 }
+    );
+    // Toggle off vía GUI -> nadie en dwell tras 30 s sim.
+    // (Esta versión de lil-gui usa clases con prefijo `lil-`, p. ej.
+    // `.lil-controller` — el checkbox se localiza por rol accesible.)
+    await page.getByRole('checkbox', { name: 'Paradas de micro' }).click();
+    const t0 = await page.evaluate(() => window.__SIM__.time);
+    await page.waitForFunction((t) => window.__SIM__.time > t + 30, t0, { timeout: 60_000 });
+    const dwelling = await page.evaluate(() => {
+      const sim = window.__SIM__.sim;
+      return sim.vehicles.filter((x) => sim.time < x.dwellUntil).length;
+    });
+    expect(dwelling).toBe(0);
+  });
+
+  test('7. mapa de calor: la congestión baja minSpeedRatio y colorea la vía', async ({ page }) => {
+    test.setTimeout(150_000);
+    await gotoAndWaitReady(page);
+    await page.evaluate(() => {
+      window.__SIM__.setSimSpeed(4);
+      window.__SIM__.setDemand(5000);
+    });
+    await page.waitForFunction(() => window.__SIM__.time > 90, null, { timeout: 90_000 });
+    const minRatio = await page.evaluate(() => window.__SIM__.minSpeedRatio);
+    expect(minRatio).toBeLessThan(0.5);
+
+    // ON -> el atributo de color del mesh de calzadas deja de ser blanco.
+    const heat = await page.evaluate(() => {
+      window.__SIM__.setHeatmap(true);
+      const st = window.__SIM__.heatmap; // hook getHeatmapState() de roadMesh
+      if (!st || !st.colors) return null;
+      const a = st.colors;
+      let nonWhite = 0;
+      for (let i = 0; i < a.length; i += 3) {
+        if (a[i] !== 1 || a[i + 1] !== 1 || a[i + 2] !== 1) nonWhite++;
+      }
+      return { vertices: a.length / 3, ranges: st.rangeCount, nonWhite };
+    });
+    expect(heat).not.toBeNull();
+    expect(heat.ranges).toBeGreaterThan(0);
+    expect(heat.nonWhite).toBeGreaterThan(0);
+
+    // OFF -> el atributo vuelve a blanco exacto (blanco x roadColor = aspecto original).
+    const allWhite = await page.evaluate(() => {
+      window.__SIM__.setHeatmap(false);
+      const a = window.__SIM__.heatmap.colors;
+      for (let i = 0; i < a.length; i++) if (a[i] !== 1) return false;
+      return true;
+    });
+    expect(allWhite).toBe(true);
+  });
+
+  test('8. diagrama espacio-tiempo: corredor >200 m y muestras crecientes', async ({ page }) => {
+    test.setTimeout(120_000);
+    await gotoAndWaitReady(page);
+    // Panel visible con título en español.
+    await expect(page.locator('#spacetime')).toContainText('Diagrama espacio-tiempo');
+    // Corredor detectado sobre la red por defecto.
+    const st0 = await page.evaluate(() => window.__SIM__.spaceTime);
+    expect(st0.corridorLength).toBeGreaterThan(200);
+    // Calentamiento: en una página recién cargada aún no hay vehículos sobre
+    // el corredor — espera la primera muestra antes de medir incrementos.
+    await page.evaluate(() => window.__SIM__.setSimSpeed(4));
+    await page.waitForFunction(() => window.__SIM__.spaceTime.sampleCount > 0, null, {
+      timeout: 60_000,
+    });
+    // Muestras estrictamente crecientes durante 10 s de pared a 4x.
+    const c0 = await page.evaluate(() => window.__SIM__.spaceTime.sampleCount);
+    await page.waitForTimeout(5_000);
+    const c1 = await page.evaluate(() => window.__SIM__.spaceTime.sampleCount);
+    await page.waitForTimeout(5_000);
+    const c2 = await page.evaluate(() => window.__SIM__.spaceTime.sampleCount);
+    expect(c1).toBeGreaterThan(c0);
+    expect(c2).toBeGreaterThan(c1);
+  });
 });

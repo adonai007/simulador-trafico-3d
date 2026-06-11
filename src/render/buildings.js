@@ -67,7 +67,7 @@ function buildingHeight(tags, rng) {
 }
 
 /** One extruded prism with per-vertex color. Throws on bad input (caller catches). */
-function extrudeFootprint(pts, height, color) {
+function extrudeFootprint(pts, height, color, baseY) {
   const shape = new THREE.Shape();
   shape.moveTo(pts[0].x, pts[0].y);
   for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i].x, pts[i].y);
@@ -75,6 +75,9 @@ function extrudeFootprint(pts, height, color) {
 
   const geom = new THREE.ExtrudeGeometry(shape, { depth: height, steps: 1, bevelEnabled: false });
   geom.rotateX(-Math.PI / 2);
+  // Base sunk to the lowest terrain corner − 0.5 m (F1) so prisms never float
+  // on slopes (flat sampler: baseY = −0.5, harmlessly buried).
+  geom.translate(0, baseY, 0);
   geom.deleteAttribute('uv'); // unused; keeps merge attributes consistent and small
 
   const count = geom.getAttribute('position').count;
@@ -99,9 +102,13 @@ function extrudeFootprint(pts, height, color) {
  * bundled snapshot ONLY when the area is the default zone (foreign footprints
  * would be wrong anywhere else) — otherwise buildings are skipped gracefully.
  * On missing/insufficient data resolves to { mesh: null, count: 0, dispose }.
+ *
+ * `sampler` (F1): elevation sampler — each prism's base is translated to
+ * min(elevAt over footprint vertices) − 0.5 m. Defaults to flat (y = −0.5).
  */
-export async function addBuildings(scene, opts) {
+export async function addBuildings(scene, opts, sampler) {
   const noop = { mesh: null, count: 0, dispose() {} };
+  const elevAt = sampler && !sampler.flat ? sampler.elevAt : null;
 
   const center =
     opts && opts.lat != null ? { lat: opts.lat, lon: opts.lon } : CONFIG.defaultCenter;
@@ -145,7 +152,16 @@ export async function addBuildings(scene, opts) {
     try {
       if (ringArea(fp.points) < MIN_AREA_M2) continue;
       const height = buildingHeight(fp.tags, rng);
-      geoms.push(extrudeFootprint(fp.points, height, rng.pick(palette)));
+      // Lowest terrain corner under the footprint (shape y = north = -z).
+      let minElev = 0;
+      if (elevAt) {
+        minElev = Infinity;
+        for (const p of fp.points) {
+          const e = elevAt(p.x, -p.y);
+          if (e < minElev) minElev = e;
+        }
+      }
+      geoms.push(extrudeFootprint(fp.points, height, rng.pick(palette), minElev - 0.5));
     } catch {
       /* degenerate / self-intersecting footprint — drop silently */
     }

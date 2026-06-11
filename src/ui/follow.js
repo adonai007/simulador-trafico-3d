@@ -13,8 +13,10 @@ const CAM_UP_M = 13;
 const CAM_SMOOTH = 4.5; // 1/s — exponential smoothing rate
 const PANEL_HZ = 8; // readout refresh rate (wall clock)
 
-const _p = { x: 0, z: 0 };
-const _h = { x: 0, z: 0 };
+// Pre-initialized with y (F1): sampleVehiclePose writes 3D poses — stable
+// hidden classes require every scratch consumer to carry y from creation.
+const _p = { x: 0, y: 0, z: 0 };
+const _h = { x: 0, y: 0, z: 0 };
 const _desired = new THREE.Vector3();
 const _target = new THREE.Vector3();
 const _gap = { has: false, gap: 0, dv: 0 };
@@ -147,10 +149,11 @@ export function createFollow(app) {
       }
       sampleVehiclePose(veh, alpha, _p, _h);
       const cam = app.view.camera;
-      _desired.set(_p.x - _h.x * CAM_BACK_M, CAM_UP_M, _p.z - _h.z * CAM_BACK_M);
+      // Chase offsets ride on the vehicle's elevation (F1).
+      _desired.set(_p.x - _h.x * CAM_BACK_M, _p.y + CAM_UP_M, _p.z - _h.z * CAM_BACK_M);
       const k = 1 - Math.exp(-CAM_SMOOTH * Math.min(wallDt, 0.1));
       cam.position.lerp(_desired, k);
-      _target.set(_p.x + _h.x * 8, 1.2, _p.z + _h.z * 8);
+      _target.set(_p.x + _h.x * 8, _p.y + 1.2, _p.z + _h.z * 8);
       cam.lookAt(_target);
 
       const now = performance.now();

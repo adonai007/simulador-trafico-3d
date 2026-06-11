@@ -31,12 +31,13 @@ const _bUp = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
 const _color = new THREE.Color();
 const _c = new THREE.Color();
-const _p = { x: 0, z: 0 };
-const _h = { x: 0, z: 0 };
-const _pA = { x: 0, z: 0 };
-const _pB = { x: 0, z: 0 };
-const _hA = { x: 0, z: 0 };
-const _hB = { x: 0, z: 0 };
+// ALL pose scratch carries y from creation (F1) — stable hidden classes.
+const _p = { x: 0, y: 0, z: 0 };
+const _h = { x: 0, y: 0, z: 0 };
+const _pA = { x: 0, y: 0, z: 0 };
+const _pB = { x: 0, y: 0, z: 0 };
+const _hA = { x: 0, y: 0, z: 0 };
+const _hB = { x: 0, y: 0, z: 0 };
 
 /**
  * Interpolated vehicle pose (spec §2.1): lerp between the step-start snapshot
@@ -44,22 +45,25 @@ const _hB = { x: 0, z: 0 };
  * Same segment -> lerp the arc position (exact). Across a segment boundary
  * (lane -> connector -> lane) -> lerp positions/headings in world space; the
  * polylines are continuous at the seam so the path stays smooth.
- * Writes into outP {x,z} and outH {x,z} (unit heading). No allocations.
+ * Writes into outP {x,y,z} (posAt elevation) and outH {x,y,z} where x/z is the
+ * unit planar heading and y = signed grade (pitch, F1). No allocations.
  */
 export function sampleVehiclePose(veh, alpha, outP, outH) {
   const seg = veh.seg;
   const prevSeg = veh.prevSeg;
   if (prevSeg === seg) {
     const s = Math.min(veh.prevS + (veh.s - veh.prevS) * alpha, seg.length);
-    seg.pointAt(s, outP);
+    seg.posAt(s, outP);
     seg.headingAt(s, outH);
+    outH.y = seg.gradeAt(s);
     return;
   }
   const sA = Math.min(veh.prevS, prevSeg.length);
   const sB = Math.min(veh.s, seg.length);
-  prevSeg.pointAt(sA, _pA);
-  seg.pointAt(sB, _pB);
+  prevSeg.posAt(sA, _pA);
+  seg.posAt(sB, _pB);
   outP.x = _pA.x + (_pB.x - _pA.x) * alpha;
+  outP.y = _pA.y + (_pB.y - _pA.y) * alpha;
   outP.z = _pA.z + (_pB.z - _pA.z) * alpha;
   prevSeg.headingAt(sA, _hA);
   seg.headingAt(sB, _hB);
@@ -75,6 +79,9 @@ export function sampleVehiclePose(veh, alpha, outP, outH) {
   }
   outH.x = hx;
   outH.z = hz;
+  const gA = prevSeg.gradeAt(sA);
+  const gB = seg.gradeAt(sB);
+  outH.y = gA + (gB - gA) * alpha;
 }
 
 // ---------------------------------------------------------------------------
@@ -374,10 +381,13 @@ export function createVehiclesMesh(sim) {
           px += -_h.z * off;
           pz += _h.x * off;
         }
-        _fwd.set(_h.x, 0, _h.z);
-        _right.crossVectors(_up, _fwd);
-        _m.makeBasis(_right, _up, _fwd);
-        _m.setPosition(px, 0.05, pz);
+        // Pitched basis (F1): _h.y = grade (de/ds) tilts the forward axis;
+        // right stays planar, up = fwd × right keeps the frame orthonormal.
+        _fwd.set(_h.x, _h.y, _h.z).normalize();
+        _right.crossVectors(_up, _fwd).normalize();
+        _bUp.crossVectors(_fwd, _right);
+        _m.makeBasis(_right, _bUp, _fwd);
+        _m.setPosition(px, _p.y + 0.05, pz);
         mesh.setMatrixAt(idx, _m);
         _color.setRGB(veh.color.r, veh.color.g, veh.color.b);
         mesh.setColorAt(idx, _color);
@@ -388,12 +398,16 @@ export function createVehiclesMesh(sim) {
           brakeCount < brakeCapacity
         ) {
           const b = brakeDims[ti];
-          // Reuse the body basis, scaled to the bar dims (unit box geometry).
+          // Reuse the body basis: bar center = pos + fwd*z + up*y, then scale
+          // the (unit box) axes to the bar dims.
+          const bx = px + _fwd.x * b.z + _bUp.x * b.y;
+          const by = _p.y + 0.05 + _fwd.y * b.z + _bUp.y * b.y;
+          const bz = pz + _fwd.z * b.z + _bUp.z * b.y;
           _right.multiplyScalar(b.w);
-          _bUp.set(0, b.h, 0);
+          _bUp.multiplyScalar(b.h);
           _fwd.multiplyScalar(b.d);
           _m.makeBasis(_right, _bUp, _fwd);
-          _m.setPosition(px + _h.x * b.z, 0.05 + b.y, pz + _h.z * b.z);
+          _m.setPosition(bx, by, bz);
           brakeMesh.setMatrixAt(brakeCount++, _m);
         }
       }

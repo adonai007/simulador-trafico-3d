@@ -6,17 +6,26 @@
 
 import { CONFIG } from './config.js';
 import { buildNetwork } from './network/build.js';
+import { createProjection } from './geo/projection.js';
+import {
+  FLAT_SAMPLER,
+  fetchElevationGrid,
+  createElevationSampler,
+} from './geo/elevation.js';
 import { createScene } from './render/scene.js';
 import { buildRoadMesh } from './render/roadMesh.js';
+import { createTerrainMesh } from './render/terrainMesh.js';
 import { createDebugOverlay } from './render/debug.js';
 import { createSignalsMesh } from './render/signalsMesh.js';
 import { createVehiclesMesh } from './render/vehiclesMesh.js';
+import { createBusStopsMesh } from './render/busStopsMesh.js';
 import { addBuildings } from './render/buildings.js';
 import { createPicking } from './render/picking.js';
 import { createSimulation } from './sim/simulation.js';
 import { createGui } from './ui/gui.js';
 import { createHud } from './ui/hud.js';
 import { createChart } from './ui/chart.js';
+import { createSpaceTime } from './ui/spaceTime.js';
 import { createFollow } from './ui/follow.js';
 import { initExplainer } from './ui/explainer.js';
 import { createSearch, showToast } from './ui/search.js';
@@ -43,10 +52,19 @@ function makeWorld(network, radiusM) {
   const view = app.view;
   const roads = buildRoadMesh(network);
   view.scene.add(roads.group);
+  // Real terrain replaces the flat ground when elevation data exists (F1).
+  let terrain = null;
+  if (network.elevation && !network.elevation.flat) {
+    terrain = createTerrainMesh(network);
+    view.scene.add(terrain.mesh);
+  }
+  view.setGroundVisible(!terrain);
   const debug = createDebugOverlay(network);
   view.scene.add(debug.group);
   const signalsMesh = createSignalsMesh(network);
   view.scene.add(signalsMesh.group);
+  const busStopsMesh = createBusStopsMesh(network);
+  view.scene.add(busStopsMesh.group);
   const sim = createSimulation(network);
   const vehiclesMesh = createVehiclesMesh(sim);
   view.scene.add(vehiclesMesh.mesh);
@@ -55,18 +73,27 @@ function makeWorld(network, radiusM) {
     network,
     sim,
     roads,
+    terrain,
     debug,
     signalsMesh,
+    busStopsMesh,
     vehiclesMesh,
     buildings: null,
     radiusM,
     dispose() {
       view.scene.remove(roads.group);
       roads.dispose();
+      if (terrain) {
+        view.scene.remove(terrain.mesh);
+        terrain.dispose();
+      }
+      view.setGroundVisible(true);
       view.scene.remove(debug.group);
       debug.dispose();
       view.scene.remove(signalsMesh.group);
       signalsMesh.dispose();
+      view.scene.remove(busStopsMesh.group);
+      busStopsMesh.dispose();
       view.scene.remove(vehiclesMesh.mesh);
       vehiclesMesh.dispose();
       if (world.buildings) {
@@ -87,7 +114,7 @@ function makeWorld(network, radiusM) {
 
 /** Fire-and-forget buildings; dropped if the world was swapped while fetching. */
 function attachBuildings(world, opts) {
-  addBuildings(app.view.scene, opts)
+  addBuildings(app.view.scene, opts, world.network.elevation)
     .then((b) => {
       if (app.world === world) world.buildings = b;
       else b.dispose();
@@ -98,11 +125,30 @@ function attachBuildings(world, opts) {
 let acc = 0; // fixed-timestep accumulator (reset on world swap)
 
 async function init() {
-  const res = await fetch('/data/default-network.json');
+  // Bundled snapshots: network + elevation grid fetched in parallel (F1).
+  const [res, elevRes] = await Promise.all([
+    fetch('/data/default-network.json'),
+    fetch('/data/default-elevation.json').catch(() => null),
+  ]);
   if (!res.ok) throw new Error(`snapshot fetch failed: ${res.status}`);
   const osm = await res.json();
 
-  const network = buildNetwork(osm, CONFIG.defaultCenter);
+  let sampler = FLAT_SAMPLER;
+  if (elevRes && elevRes.ok) {
+    try {
+      const grid = await elevRes.json();
+      sampler = createElevationSampler(
+        grid,
+        createProjection(CONFIG.defaultCenter.lat, CONFIG.defaultCenter.lon)
+      );
+    } catch (err) {
+      console.warn('[elevation] snapshot inválido — terreno plano:', err);
+    }
+  } else {
+    console.warn('[elevation] snapshot no disponible — terreno plano.');
+  }
+
+  const network = buildNetwork(osm, CONFIG.defaultCenter, sampler);
   const r = CONFIG.defaultRadiusM;
   app.view = createScene(document.getElementById('app'), clampBbox(network.bbox, r));
   app.world = makeWorld(network, r);
@@ -113,6 +159,7 @@ async function init() {
   const gui = createGui(app);
   const hud = createHud(app);
   const chart = createChart(app);
+  const spaceTime = createSpaceTime(app);
   const follow = createFollow(app);
   createPicking(
     app.view,
@@ -128,9 +175,19 @@ async function init() {
     let wayCount = 0;
     for (const el of newOsm.elements || []) if (el.type === 'way') wayCount++;
     if (wayCount < CONFIG.minKeptWays) return false;
+    // Elevation for the searched zone (awaited behind the search loading
+    // overlay); any failure falls back to flat terrain with a toast.
+    let sampler2 = FLAT_SAMPLER;
+    try {
+      const grid = await fetchElevationGrid(center.lat, center.lon, radiusM);
+      sampler2 = createElevationSampler(grid, createProjection(center.lat, center.lon));
+    } catch (err) {
+      console.warn('[elevation] fetch falló — terreno plano:', err);
+      showToast('Sin datos de elevación — terreno plano');
+    }
     let network2;
     try {
-      network2 = buildNetwork(newOsm, center);
+      network2 = buildNetwork(newOsm, center, sampler2);
     } catch (err) {
       console.warn('[rebuild] buildNetwork failed:', err);
       return false;
@@ -160,6 +217,9 @@ async function init() {
     get network() {
       return app.world ? app.world.network : null;
     },
+    get busStops() {
+      return app.world ? app.world.network.busStops : null;
+    },
     get sim() {
       return app.world ? app.world.sim : null;
     },
@@ -186,11 +246,30 @@ async function init() {
     setDemand: (vph) => app.world && app.world.sim.setDemand(vph),
     setSimSpeed: (x) => app.world && app.world.sim.setSimSpeed(x),
     setPaused: (p) => app.world && app.world.sim.setPaused(p),
+    setHeatmap: (b) => app.world && app.world.roads.setHeatmap(b),
+    get minSpeedRatio() {
+      return app.world ? app.world.sim.metrics.minSpeedRatio : 1;
+    },
+    get heatmap() {
+      // F3 e2e hook: {enabled, colors, rangeCount, ranges} from roadMesh.
+      return app.world ? app.world.roads.getHeatmapState() : null;
+    },
+    get elevation() {
+      const e = app.world ? app.world.network.elevation : null;
+      return e ? { min: e.minElev, max: e.maxElev, flat: e.flat } : null;
+    },
     get debug() {
       return app.world ? app.world.debug : null;
     },
     get chartPoints() {
       return chart.pointCount;
+    },
+    get spaceTime() {
+      return {
+        sampleCount: spaceTime.sampleCount,
+        corridorName: spaceTime.corridorName,
+        corridorLength: spaceTime.corridorLength,
+      };
     },
     follow,
     get view() {
@@ -200,6 +279,7 @@ async function init() {
 
   // ---- Fixed-timestep loop with accumulator + interpolation (spec §2.1) ----
   let last = performance.now();
+  let nextHeat = 0; // F3: wall-clock heatmap repaint gate (CONFIG.heatmap.updateHz)
   function frame(now) {
     requestAnimationFrame(frame);
     let wallDt = (now - last) / 1000;
@@ -219,8 +299,13 @@ async function init() {
       const alpha = Math.min(acc / DT, 1);
       world.signalsMesh.update(sim.time);
       world.vehiclesMesh.update(alpha);
+      if (now >= nextHeat) {
+        nextHeat = now + 1000 / (CONFIG.heatmap.updateHz ?? 1);
+        world.roads.updateHeatmap(); // no-op while the heatmap is off
+      }
       hud.update();
       chart.update();
+      spaceTime.update();
       follow.update(alpha, wallDt);
     }
     if (!follow.active) app.view.controls.update();

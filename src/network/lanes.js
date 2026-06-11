@@ -1,5 +1,6 @@
 // Per-lane offset polylines, stop-line trimming, arc-length tables. Spec §1.6.
-// Lane API (used by sim + render): lane.pointAt(s, out?), lane.headingAt(s, out?).
+// Lane API (used by sim + render): lane.pointAt(s, out?), lane.headingAt(s, out?),
+// lane.posAt(s, out?) -> {x,y,z}, lane.gradeAt(s) -> signed forward slope (F1).
 // Stop line = lane end (s = lane.length).
 
 import { CONFIG } from '../config.js';
@@ -9,14 +10,22 @@ import {
   cumulativeLengths,
   trimPolyline,
   pointAtParam,
+  pointAtParam3,
   headingAtParam,
   dedupePolyline,
 } from '../util/math2d.js';
 
+/** Shared zero-grade fn for flat worlds (one identity for every flat segment). */
+export const ZERO_GRADE = () => 0;
+
 /**
  * Wrap a polyline in the shared Lane API. Used for real lanes and connectors.
- * `pointAt`/`headingAt` accept an optional `out` object to avoid per-frame
- * allocations in the render/sim loops.
+ * `pointAt`/`headingAt`/`posAt` accept an optional `out` object to avoid
+ * per-frame allocations in the render/sim loops.
+ * Elevation (F1): `lane.elev` is a Float32Array parallel to `lane.points`
+ * (null on flat worlds). posAt/gradeAt exist ALWAYS — monomorphic call sites;
+ * network/elevation.js fills `elev` and swaps `gradeAt` in when a real
+ * elevation sampler is present.
  */
 export function makeLaneFromPoints(points, props) {
   const pts = dedupePolyline(points);
@@ -28,10 +37,13 @@ export function makeLaneFromPoints(points, props) {
     vehicles: [],
     outConnectors: [],
     isConnector: false,
+    elev: null,
     ...props,
   };
   lane.pointAt = (s, out) => pointAtParam(lane.points, lane.cumLen, s, out);
   lane.headingAt = (s, out) => headingAtParam(lane.points, lane.cumLen, s, out);
+  lane.posAt = (s, out) => pointAtParam3(lane.points, lane.cumLen, lane.elev, s, out);
+  lane.gradeAt = ZERO_GRADE;
   return lane;
 }
 
