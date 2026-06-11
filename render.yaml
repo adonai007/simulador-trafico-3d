@@ -1,0 +1,6 @@
+services:
+  - type: web
+    runtime: static
+    name: simulador-trafico-3d
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist

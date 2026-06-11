@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simulación de Tráfico Urbano 3D</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2358a6ff'/%3E%3Ccircle cx='8' cy='4' r='2' fill='%23ff3b30'/%3E%3Ccircle cx='8' cy='8' r='2' fill='%23ffc21a'/%3E%3Ccircle cx='8' cy='12' r='2' fill='%2329d35d'/%3E%3C/svg%3E" />
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: rgba(13, 17, 23, 0.82);
+      --panel-border: rgba(110, 168, 254, 0.18);
+      --text: #e6edf3;
+      --text-dim: #8b949e;
+      --accent: #58a6ff;
+      --radius: 10px;
+      --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font); }
+    #app { position: fixed; inset: 0; }
+    #app canvas { display: block; }
+
+    .panel {
+      position: fixed;
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius);
+      backdrop-filter: blur(8px);
+      padding: 12px 16px;
+      z-index: 10;
+    }
+
+    /* HUD — métricas en vivo (Fase 5 las llena) */
+    #hud { top: 16px; left: 16px; min-width: 210px; }
+    #hud h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.04em; color: var(--accent); margin-bottom: 8px; }
+    #hud .stat { display: flex; justify-content: space-between; gap: 16px; font-size: 12.5px; line-height: 1.8; }
+    #hud .stat .label { color: var(--text-dim); }
+    #hud .stat .value { font-variant-numeric: tabular-nums; }
+
+    /* Buscador de zona (Fase 6) */
+    #search { top: 16px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; padding: 8px 10px; }
+    #search input {
+      width: 320px; padding: 7px 12px; font-size: 13px; color: var(--text);
+      background: rgba(255,255,255,0.06); border: 1px solid var(--panel-border);
+      border-radius: 6px; outline: none; font-family: var(--font);
+    }
+    #search input::placeholder { color: var(--text-dim); }
+    #search input:focus { border-color: var(--accent); }
+    #search button {
+      padding: 7px 14px; font-size: 13px; font-weight: 600; color: #0d1117;
+      background: var(--accent); border: none; border-radius: 6px; cursor: pointer; font-family: var(--font);
+    }
+    #search button:hover { filter: brightness(1.1); }
+
+    /* Panel explicativo (Fase 5) */
+    #explainer { bottom: 16px; left: 16px; max-width: 380px; }
+    #explainer > details > summary { cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--accent); list-style: none; }
+    #explainer > details > summary::before { content: '▸ '; }
+    #explainer > details[open] > summary::before { content: '▾ '; }
+    #explainer .body { margin-top: 8px; font-size: 12.5px; color: var(--text-dim); line-height: 1.5; max-height: 46vh; overflow-y: auto; padding-right: 4px; }
+    #explainer .exp-section { margin-bottom: 6px; }
+    #explainer .exp-section summary { cursor: pointer; color: var(--text); font-weight: 600; font-size: 12.5px; }
+    #explainer .exp-body { margin: 6px 0 10px 12px; }
+    #explainer .exp-body code { color: #9ecbff; font-size: 12px; }
+    #explainer .exp-body ul { margin-left: 16px; }
+    #explainer .exp-body li { margin-bottom: 4px; }
+
+    /* Diagrama fundamental (Fase 5) */
+    #chart { bottom: 16px; right: 16px; padding: 10px 12px; }
+    #chart-header { display: flex; justify-content: space-between; gap: 16px; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent); user-select: none; }
+    #chart-body { margin-top: 6px; }
+    #chart canvas { display: block; }
+    #chart-hint { font-size: 10.5px; color: var(--text-dim); margin-top: 2px; max-width: 320px; }
+
+    /* Panel de seguimiento (Fase 5) */
+    #follow { top: 16px; left: 16px; margin-top: 230px; min-width: 230px; }
+    #follow h2 { font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: 6px; }
+    #follow .stat { display: flex; justify-content: space-between; gap: 16px; font-size: 12.5px; line-height: 1.8; }
+    #follow .stat .label { color: var(--text-dim); }
+    #follow .stat .value { font-variant-numeric: tabular-nums; }
+    #follow-hint { font-size: 10.5px; color: var(--text-dim); margin-top: 6px; }
+
+    /* Overlay de carga (Fase 6) */
+    #loading {
+      position: fixed; inset: 0; z-index: 30; display: none;
+      align-items: center; justify-content: center; flex-direction: column; gap: 14px;
+      background: rgba(13, 17, 23, 0.72); backdrop-filter: blur(3px);
+      font-size: 15px; color: var(--text);
+    }
+    #loading .spinner {
+      width: 34px; height: 34px; border-radius: 50%;
+      border: 3px solid rgba(110, 168, 254, 0.25); border-top-color: var(--accent);
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #toast {
+      bottom: 24px; left: 50%; transform: translateX(-50%);
+      display: none; font-size: 13px; padding: 10px 18px; z-index: 40;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="hud" class="panel">
+    <h1>Tráfico Urbano 3D — La Paz</h1>
+    <div class="stat"><span class="label">Vehículos activos</span><span class="value" id="hud-vehicles">—</span></div>
+    <div class="stat"><span class="label">Vel. media</span><span class="value" id="hud-speed">— km/h</span></div>
+    <div class="stat"><span class="label">Flujo</span><span class="value" id="hud-flow">— veh/h/carril</span></div>
+    <div class="stat"><span class="label">Densidad</span><span class="value" id="hud-density">— veh/km</span></div>
+    <div class="stat"><span class="label">Tiempo sim</span><span class="value" id="hud-time">—</span></div>
+    <div class="stat"><span class="label">ms/paso</span><span class="value" id="hud-step">—</span></div>
+  </div>
+
+  <div id="search" class="panel">
+    <input id="search-input" type="text" placeholder="Buscar lugar o pegar URL de Google Maps…" autocomplete="off" />
+    <button id="search-btn" type="button">Buscar</button>
+  </div>
+
+  <div id="explainer" class="panel">
+    <details>
+      <summary>¿Cómo funciona?</summary>
+      <div class="body">
+        Simulación microscópica de tráfico sobre la red vial real de La Paz
+        (OpenStreetMap): modelo IDM de seguimiento, cambios de carril MOBIL y
+        semáforos coordinados con onda verde.
+      </div>
+    </details>
+  </div>
+
+  <div id="loading">
+    <div class="spinner"></div>
+    <div>Descargando mapa…</div>
+  </div>
+
+  <div id="toast" class="panel"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
