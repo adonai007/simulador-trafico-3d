@@ -13,6 +13,8 @@ npx playwright test             # full e2e suite (reuses a running dev server)
 npx playwright test -g "viva"   # single test by title substring
 ```
 
+Run tests as plain `npx playwright test` — no env-var prefixes (`SIM_PORT=...`, `$env:SIM_PORT=...`). The port defaults to 5173 in `playwright.config.js`; only a human overrides SIM_PORT manually when another project occupies the port.
+
 UI text is **Spanish**; code identifiers and comments are **English**. The authoritative design document is `docs/DESIGN-SPEC.md` — deviations from it are recorded at its bottom and must be kept up to date.
 
 ## Architecture
@@ -44,6 +46,8 @@ Three layers, one-directional data flow. `src/main.js` owns the swappable `world
 - **Metrics contract** (`sim/detectors.js`): `sim.metrics = { global, detectorPoints }` are **stable references mutated in place** on sim-time cadences (0.5 s global, 5 s detector windows); UI closes over them and polls. `k` = veh/km/lane (counted occupancy), `q` = veh/h/lane — exactly the fundamental-diagram axes in `ui/chart.js`.
 
 - **Bundled snapshots vs live Overpass**: first paint never touches the network — `public/data/default-network.json` and `default-buildings.json` are build-time snapshots of the default La Paz zone (center/radius hardcoded next to them in `config.js`; the projection origin must match the snapshot center). Live search (`ui/search.js`) goes Nominatim → `osm/overpass.js` (mirror fallback, 25 s aborts, way/node caps with one 0.6×radius retry, radius clamp 250–1200 m) and keeps the current network on any failure, with Spanish toasts.
+
+- **Overpass WAF vs non-browser tooling**: `overpass-api.de` returns **HTTP 406** to non-browser User-Agents (node scripts, curl). The app is unaffected (browser UA), but node-side tooling (snapshot scripts, funnel diagnostics like `tests/funnel-macrodistrito.mjs`) must send a browser-like `User-Agent` header or use the `overpass.kumi.systems` mirror.
 
 - **Determinism**: all randomness flows through the seeded mulberry32 RNG (`util/rng.js`, seed in `config.js`); sim clocks are sim-time, never wall-time.
 

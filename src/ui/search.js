@@ -27,8 +27,9 @@ function setLoading(visible) {
 
 /**
  * createSearch(rebuildWorld) — wires #search-input / #search-btn.
- * rebuildWorld(osm, {lat, lon}, radiusM) -> Promise<boolean> (false = network
- * too small; the caller keeps the current world in that case).
+ * rebuildWorld(osm, {lat, lon}, radiusM) -> Promise<true | 'incomplete' | false>
+ * (true = swapped; 'incomplete' = validation failed after the radius retry;
+ * false = network too small/unusable — the current world is kept either way).
  */
 export function createSearch(rebuildWorld) {
   const input = document.getElementById('search-input');
@@ -55,8 +56,12 @@ export function createSearch(rebuildWorld) {
         return;
       }
       const { osm, radiusM } = await fetchNetworkOsm(loc.lat, loc.lon, loc.radiusM);
-      const ok = await rebuildWorld(osm, { lat: loc.lat, lon: loc.lon }, radiusM);
-      if (!ok) {
+      const result = await rebuildWorld(osm, { lat: loc.lat, lon: loc.lon }, radiusM);
+      if (result === 'incomplete') {
+        // V2.1 A: validation (kept length / retention) failed even after the
+        // automatic radius x1.5 retry inside rebuildWorld.
+        showToast('Red viaria incompleta en esta zona — probá con más radio o otro punto');
+      } else if (result !== true) {
         showToast('Zona sin red viaria suficiente. Se mantiene la red actual.');
       }
     } catch (err) {

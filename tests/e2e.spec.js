@@ -74,9 +74,13 @@ test.describe('Simulador de Tráfico Urbano 3D', () => {
     const freeFlow = await page.evaluate(() => window.__SIM__.metrics.global.meanSpeedKmh);
     expect(freeFlow).toBeGreaterThan(5); // sanity: traffic is actually moving
 
-    // Saturar la red y dejar pasar >60 s sim.
+    // Saturar la red y dejar pasar >60 s sim. 6000 = tope del slider de
+    // demanda: con la poda WCC (V2.1 A) la red por defecto conserva el 100%
+    // de las vías y gana entradas/salidas en los fondos de saco (7->32
+    // entradas), así que absorbe 5000 veh/h sin caída global del 10%
+    // (medido determinista en node: ratio 0.925 a 5000, 0.831 a 6000).
     const t0 = await page.evaluate(() => {
-      window.__SIM__.setDemand(5000);
+      window.__SIM__.setDemand(6000);
       return window.__SIM__.time;
     });
     await page.waitForFunction((t) => window.__SIM__.time > t + 90, t0, { timeout: 60_000 });

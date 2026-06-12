@@ -27,6 +27,8 @@ import { applyElevation } from './elevation.js';
  *   signals: Map(junctionId -> {junctionId, groups: Map(edgeId->'NS'|'EW'), plan}),
  *   nodeRadii: Map(nodeId -> R_node meters),
  *   entries: [{nodeId, edgeId, weight}], exits: [...], spawnMode,
+ *   graphStats: {pruneMode, totalDirectedEdges, keptDirectedEdges,
+ *                totalDirectedLengthM, keptDirectedLengthM},  // V2.1 A
  *   routing, bbox: {minX,maxX,minZ,maxZ}, totalLaneKm, dispose(),
  *   busStops: [{id, laneId, lane, s, name}]  // F2; lane.busStops = ascending-s array | null
  * }
@@ -66,6 +68,7 @@ export function buildNetwork(osmJson, center, sampler = FLAT_SAMPLER) {
     entries: graph.entries,
     exits: graph.exits,
     spawnMode: graph.spawnMode,
+    graphStats: graph.stats, // V2.1 A: prune funnel (kept length / retention)
     routing,
     busStops,
     elevation: sampler,

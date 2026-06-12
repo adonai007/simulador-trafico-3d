@@ -1,9 +1,15 @@
-// OSM ways -> directed edge graph. Spec §1.4 / §1.5:
+// OSM ways -> directed edge graph. Spec §1.4 / §1.5 + V2.1 A:
 //   1. split ways at junction nodes (refCount >= 2 or way endpoint)
 //   2. degree-2 collapse (keep traffic_signals nodes)
 //   3. micro-edge merge (< 8 m junction-junction, midpoint collapse, <= 3 passes)
 //   4. directed edges (two per two-way segment, twins linked)
-//   5. iterative Tarjan SCC -> keep largest as core + boundary stubs
+//   5. prune (CONFIG.network.pruneMode):
+//      'wcc' (default) — keep the largest weakly connected component; dead-end
+//        tips (undirected degree 1) become entries (directed into the interior)
+//        / exits (directed out). Unreachable one-way pockets self-resolve in
+//        the sim (re-route at lane end + despawn fallbacks).
+//      'scc' — legacy iterative Tarjan keep-largest-SCC + boundary stubs
+//        (didactic comparison / rollback; discards one-way pockets).
 //   6. entries / exits with spawn weights
 
 import { CONFIG } from '../config.js';
@@ -296,6 +302,48 @@ function tarjanScc(nodeIds, outEdgesByNode, edges) {
 }
 
 /**
+ * Weakly connected components over the undirected node graph (edge direction
+ * ignored). Returns the component id per node and the id of the component
+ * with the greatest total directed edge length (the metric the V2.1 search
+ * validation uses — node count can crown a sparse residential blob).
+ */
+function largestWcc(nodes, edges) {
+  const compOf = new Map(); // nodeId -> compId
+  let compCount = 0;
+  const stack = [];
+  for (const rootId of nodes.keys()) {
+    if (compOf.has(rootId)) continue;
+    const cid = compCount++;
+    compOf.set(rootId, cid);
+    stack.push(rootId);
+    while (stack.length) {
+      const n = nodes.get(stack.pop());
+      for (const eid of n.edgesOut) {
+        const w = edges.get(eid).toNode;
+        if (!compOf.has(w)) {
+          compOf.set(w, cid);
+          stack.push(w);
+        }
+      }
+      for (const eid of n.edgesIn) {
+        const w = edges.get(eid).fromNode;
+        if (!compOf.has(w)) {
+          compOf.set(w, cid);
+          stack.push(w);
+        }
+      }
+    }
+  }
+  const lengthByComp = new Array(compCount).fill(0);
+  for (const e of edges.values()) lengthByComp[compOf.get(e.fromNode)] += e.lengthM;
+  let coreComp = 0;
+  for (let i = 1; i < compCount; i++) {
+    if (lengthByComp[i] > lengthByComp[coreComp]) coreComp = i;
+  }
+  return { compOf, coreComp };
+}
+
+/**
  * Build the pruned directed graph from parsed OSM data.
  * Returns {
  *   nodes: Map(nodeId -> {id, x, z, edgesIn[], edgesOut[], legCount, inCore}),
@@ -304,7 +352,9 @@ function tarjanScc(nodeIds, outEdgesByNode, edges) {
  *   entries: [{nodeId, edgeId, weight}],
  *   exits:   [{nodeId, edgeId, weight}],
  *   spawnMode: 'entries' | 'onNetwork',
- *   bbox: {minX, maxX, minZ, maxZ}
+ *   bbox: {minX, maxX, minZ, maxZ},
+ *   stats: {pruneMode, totalDirectedEdges, keptDirectedEdges,
+ *           totalDirectedLengthM, keptDirectedLengthM}   // V2.1 A funnel
  * }
  */
 export function buildGraph(parsed, projection) {
@@ -342,16 +392,22 @@ export function buildGraph(parsed, projection) {
     n.legCount = legs;
   }
 
-  // --- SCC prune ---
-  const outByNode = new Map();
-  for (const n of nodes.values()) outByNode.set(n.id, n.edgesOut);
-  const { sccOf, sccCount } = tarjanScc(nodes.keys(), outByNode, edges);
-  const sccSize = new Array(sccCount).fill(0);
-  for (const sccId of sccOf.values()) sccSize[sccId]++;
-  let coreScc = 0;
-  for (let i = 1; i < sccCount; i++) if (sccSize[i] > sccSize[coreScc]) coreScc = i;
-
-  const inCore = (nodeId) => sccOf.get(nodeId) === coreScc;
+  // --- Prune: largest WCC (default) or legacy largest SCC (V2.1 A) ---
+  const pruneMode = CONFIG.network?.pruneMode === 'scc' ? 'scc' : 'wcc';
+  let inCore;
+  if (pruneMode === 'scc') {
+    const outByNode = new Map();
+    for (const n of nodes.values()) outByNode.set(n.id, n.edgesOut);
+    const { sccOf, sccCount } = tarjanScc(nodes.keys(), outByNode, edges);
+    const sccSize = new Array(sccCount).fill(0);
+    for (const sccId of sccOf.values()) sccSize[sccId]++;
+    let coreScc = 0;
+    for (let i = 1; i < sccCount; i++) if (sccSize[i] > sccSize[coreScc]) coreScc = i;
+    inCore = (nodeId) => sccOf.get(nodeId) === coreScc;
+  } else {
+    const { compOf, coreComp } = largestWcc(nodes, edges);
+    inCore = (nodeId) => compOf.get(nodeId) === coreComp;
+  }
   for (const n of nodes.values()) n.inCore = inCore(n.id);
 
   // Undirected degree per node (twin pairs = 1).
@@ -362,28 +418,46 @@ export function buildGraph(parsed, projection) {
   const exits = [];
   const classWeight = (cls) => CONFIG.classWeights[cls] || 1;
 
-  for (const e of edges.values()) {
-    const fromIn = inCore(e.fromNode);
-    const toIn = inCore(e.toNode);
-    if (fromIn && toIn) {
+  if (pruneMode === 'wcc') {
+    // Every edge with an endpoint in the core WCC has BOTH endpoints in it
+    // (weak connectivity is closed under incident edges). Dead-end tips
+    // (degree 1) become entries when directed into the interior, exits when
+    // directed out — a two-way stub contributes one of each at the same node.
+    for (const e of edges.values()) {
+      if (!inCore(e.fromNode)) continue;
       keptEdges.set(e.id, e);
-      continue;
+      const w = e.laneCount * classWeight(e.highwayClass);
+      if (undirectedDeg(nodes.get(e.fromNode)) === 1) {
+        entries.push({ nodeId: e.fromNode, edgeId: e.id, weight: w });
+      }
+      if (undirectedDeg(nodes.get(e.toNode)) === 1) {
+        exits.push({ nodeId: e.toNode, edgeId: e.id, weight: w });
+      }
     }
-    // Boundary stubs: one endpoint in core, outer endpoint total degree 1.
-    if (toIn && !fromIn && undirectedDeg(nodes.get(e.fromNode)) === 1) {
-      keptEdges.set(e.id, e);
-      entries.push({
-        nodeId: e.fromNode,
-        edgeId: e.id,
-        weight: e.laneCount * classWeight(e.highwayClass),
-      });
-    } else if (fromIn && !toIn && undirectedDeg(nodes.get(e.toNode)) === 1) {
-      keptEdges.set(e.id, e);
-      exits.push({
-        nodeId: e.toNode,
-        edgeId: e.id,
-        weight: e.laneCount * classWeight(e.highwayClass),
-      });
+  } else {
+    for (const e of edges.values()) {
+      const fromIn = inCore(e.fromNode);
+      const toIn = inCore(e.toNode);
+      if (fromIn && toIn) {
+        keptEdges.set(e.id, e);
+        continue;
+      }
+      // Boundary stubs: one endpoint in core, outer endpoint total degree 1.
+      if (toIn && !fromIn && undirectedDeg(nodes.get(e.fromNode)) === 1) {
+        keptEdges.set(e.id, e);
+        entries.push({
+          nodeId: e.fromNode,
+          edgeId: e.id,
+          weight: e.laneCount * classWeight(e.highwayClass),
+        });
+      } else if (fromIn && !toIn && undirectedDeg(nodes.get(e.toNode)) === 1) {
+        keptEdges.set(e.id, e);
+        exits.push({
+          nodeId: e.toNode,
+          edgeId: e.id,
+          weight: e.laneCount * classWeight(e.highwayClass),
+        });
+      }
     }
   }
   // Fix dangling twin references and rebuild node in/out lists for kept set.
@@ -428,5 +502,18 @@ export function buildGraph(parsed, projection) {
     }
   }
 
-  return { nodes: keptNodes, edges: keptEdges, entries, exits, spawnMode, bbox };
+  // Prune funnel stats (V2.1 A search validation: kept length / retention).
+  let totalDirectedLengthM = 0;
+  for (const e of edges.values()) totalDirectedLengthM += e.lengthM;
+  let keptDirectedLengthM = 0;
+  for (const e of keptEdges.values()) keptDirectedLengthM += e.lengthM;
+  const stats = {
+    pruneMode,
+    totalDirectedEdges: edges.size,
+    keptDirectedEdges: keptEdges.size,
+    totalDirectedLengthM,
+    keptDirectedLengthM,
+  };
+
+  return { nodes: keptNodes, edges: keptEdges, entries, exits, spawnMode, bbox, stats };
 }

@@ -6,6 +6,10 @@ import { CONFIG } from '../config.js';
 import { clamp } from '../util/math2d.js';
 
 const GMAPS_AT_RE = /@(-?\d+\.\d+),(-?\d+\.\d+),(\d+(?:\.\d+)?)z/;
+// Place pin (V2.1 A): /maps/place/ URLs carry the searched place as !3d{lat}!4d{lon}
+// in the data blob — the @ coords are just the viewport center (381 m off the
+// urban core in the Macrodistrito Centro bug report).
+const GMAPS_PIN_RE = /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/;
 const QPARAM_RE = /[?&]q=(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/;
 const BARE_PAIR_RE = /^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/;
 
@@ -15,24 +19,53 @@ function zoomToRadius(lat, zoom) {
   return clamp(m, CONFIG.radiusClampM.min, CONFIG.radiusClampM.max);
 }
 
+/** Apply a minimum radius, re-clamped to the global radius bounds. */
+function flooredRadius(radiusM, floorM) {
+  return clamp(Math.max(radiusM, floorM), CONFIG.radiusClampM.min, CONFIG.radiusClampM.max);
+}
+
 function validCoords(lat, lon) {
   return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
 }
 
 /**
- * Try to parse the query locally: Google Maps URL (@lat,lon,zoom z), ?q=lat,lon,
- * or a bare "lat, lon" pair. Returns {lat, lon, radiusM, label} or null.
+ * Try to parse the query locally: Google Maps URL (place pin !3d!4d preferred
+ * over the @ viewport center — V2.1 A), ?q=lat,lon, or a bare "lat, lon" pair.
+ * Returns {lat, lon, radiusM, label} or null. Radius floors: place URLs 800 m
+ * (z15 gave 410 m discs that fragment one-way loops), plain @ URLs 500 m.
  */
 export function parseCoordsOrUrl(q) {
-  let m = q.match(GMAPS_AT_RE);
-  if (m) {
-    const lat = parseFloat(m[1]);
-    const lon = parseFloat(m[2]);
+  const at = q.match(GMAPS_AT_RE);
+  const pin = q.match(GMAPS_PIN_RE);
+  if (pin) {
+    const lat = parseFloat(pin[1]);
+    const lon = parseFloat(pin[2]);
     if (validCoords(lat, lon)) {
-      return { lat, lon, radiusM: zoomToRadius(lat, parseFloat(m[3])), label: 'URL de Google Maps' };
+      const zoomR = at ? zoomToRadius(lat, parseFloat(at[3])) : CONFIG.defaultRadiusM;
+      return {
+        lat,
+        lon,
+        radiusM: flooredRadius(zoomR, CONFIG.geocode.placeRadiusFloorM),
+        label: 'URL de Google Maps',
+      };
     }
   }
-  m = q.match(QPARAM_RE) || q.match(BARE_PAIR_RE);
+  if (at) {
+    const lat = parseFloat(at[1]);
+    const lon = parseFloat(at[2]);
+    if (validCoords(lat, lon)) {
+      const floorM = /\/place\//.test(q)
+        ? CONFIG.geocode.placeRadiusFloorM
+        : CONFIG.geocode.atRadiusFloorM;
+      return {
+        lat,
+        lon,
+        radiusM: flooredRadius(zoomToRadius(lat, parseFloat(at[3])), floorM),
+        label: 'URL de Google Maps',
+      };
+    }
+  }
+  const m = q.match(QPARAM_RE) || q.match(BARE_PAIR_RE);
   if (m) {
     const lat = parseFloat(m[1]);
     const lon = parseFloat(m[2]);

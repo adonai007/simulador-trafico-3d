@@ -20,6 +20,14 @@ export const CONFIG = {
   },
   nominatimUrl: 'https://nominatim.openstreetmap.org/search',
 
+  // ---- Geocoding radius floors (V2.1 A) ----
+  // z15 place URLs produced 410 m discs that clip one-way avenue loops and
+  // fragment the graph; the place pin deserves a wider net than a bare viewport.
+  geocode: {
+    placeRadiusFloorM: 800, // Google Maps /place/ URLs (!3d!4d pin present)
+    atRadiusFloorM: 500,    // plain @lat,lon,zz URLs (no place pin)
+  },
+
   // ---- Highway whitelist (Overpass regex + parse filter) ----
   highwayWhitelist: [
     'motorway', 'trunk', 'primary', 'secondary', 'tertiary',
@@ -58,6 +66,18 @@ export const CONFIG = {
   classWeights: { motorway: 4, trunk: 3, primary: 3, secondary: 2 }, // default 1
   minCoreEdges: 10,           // below this -> "Zona sin red viaria suficiente"
   minKeptWays: 5,
+
+  // ---- Graph pruning + search-path validation (V2.1 A) ----
+  network: {
+    // 'wcc' keeps the largest weakly connected component (dead-end tips become
+    // entries/exits; unreachable pockets self-resolve via re-route/despawn).
+    // 'scc' = legacy Tarjan keep-largest-SCC, kept for didactic comparison
+    // and rollback — it discarded 70.8% of road length in clipped
+    // one-way-heavy zones (Macrodistrito Centro diagnostic).
+    pruneMode: 'wcc',
+    minKeptLengthKm: 2.5,     // searched zone must keep >= this directed length
+    minRetention: 0.5,        // kept / fetched directed length, else retry/toast
+  },
 
   // ---- Connectors (turn curves) ----
   connectors: {
@@ -195,6 +215,18 @@ export const CONFIG = {
     greenRatio: 0.8,    // speed ratio >= this -> green (free flow)
     yellowRatio: 0.45,  // mid-ramp anchor (yellow)
     redRatio: 0.2,      // speed ratio <= this -> red (jammed)
+  },
+
+  // ---- Nombres de calles (V2.1 B) ----
+  streetNames: {
+    enabled: true,        // initial "Nombres de calles" checkbox state
+    maxLabels: 60,        // class-prioritized sprite cap per world
+    liftM: 6,             // label height above the lane surface (follows terrain)
+    fadeNearM: 400,       // full opacity below this camera distance
+    fadeFarM: 1200,       // opacity reaches 0 at this distance
+    residentialMaxM: 300, // minor-class labels (residential & co.) only below this
+    labelHeightM: 12,     // sprite world height; width follows the text aspect
+    updateHz: 5,          // wall-clock fade/LOD update rate inside update(camera)
   },
 
   // ---- Rendering ----

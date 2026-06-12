@@ -27,6 +27,7 @@ export function createGui(app) {
     paradasMicro: CONFIG.busStops.enabled,
     paradaMediaS: CONFIG.busStops.meanDwellS,
     mapaCalor: !!CONFIG.heatmap.enabled,
+    nombresCalles: CONFIG.streetNames.enabled !== false,
   };
 
   const retime = () =>
@@ -103,6 +104,10 @@ export function createGui(app) {
     .add(params, 'mapaCalor')
     .name('Mapa de calor')
     .onChange((v) => app.world.roads.setHeatmap(v));
+  fView
+    .add(params, 'nombresCalles')
+    .name('Nombres de calles')
+    .onChange((v) => app.world.streetNames.setVisible(v));
   fView.close();
 
   return {
@@ -117,6 +122,7 @@ export function createGui(app) {
       world.debug.setLanesVisible(params.verCarriles);
       world.debug.setConnectorsVisible(params.verConectores);
       world.roads.setHeatmap(params.mapaCalor);
+      world.streetNames.setVisible(params.nombresCalles);
     },
     dispose() {
       gui.destroy();

@@ -6,6 +6,7 @@
 
 import { CONFIG } from './config.js';
 import { buildNetwork } from './network/build.js';
+import { fetchNetworkOsm } from './osm/overpass.js';
 import { createProjection } from './geo/projection.js';
 import {
   FLAT_SAMPLER,
@@ -19,6 +20,7 @@ import { createDebugOverlay } from './render/debug.js';
 import { createSignalsMesh } from './render/signalsMesh.js';
 import { createVehiclesMesh } from './render/vehiclesMesh.js';
 import { createBusStopsMesh } from './render/busStopsMesh.js';
+import { createStreetNames } from './render/streetNames.js';
 import { addBuildings } from './render/buildings.js';
 import { createPicking } from './render/picking.js';
 import { createSimulation } from './sim/simulation.js';
@@ -65,6 +67,8 @@ function makeWorld(network, radiusM) {
   view.scene.add(signalsMesh.group);
   const busStopsMesh = createBusStopsMesh(network);
   view.scene.add(busStopsMesh.group);
+  const streetNames = createStreetNames(network); // V2.1 B map-style labels
+  view.scene.add(streetNames.group);
   const sim = createSimulation(network);
   const vehiclesMesh = createVehiclesMesh(sim);
   view.scene.add(vehiclesMesh.mesh);
@@ -77,6 +81,7 @@ function makeWorld(network, radiusM) {
     debug,
     signalsMesh,
     busStopsMesh,
+    streetNames,
     vehiclesMesh,
     buildings: null,
     radiusM,
@@ -94,6 +99,8 @@ function makeWorld(network, radiusM) {
       signalsMesh.dispose();
       view.scene.remove(busStopsMesh.group);
       busStopsMesh.dispose();
+      view.scene.remove(streetNames.group);
+      streetNames.dispose();
       view.scene.remove(vehiclesMesh.mesh);
       vehiclesMesh.dispose();
       if (world.buildings) {
@@ -170,11 +177,11 @@ async function init() {
     }
   );
 
-  /** Full teardown/rebuild for the map search. Returns false -> keep current. */
-  async function rebuildWorld(newOsm, center, radiusM) {
+  /** One build attempt: elevation fetch + buildNetwork. null -> unusable OSM. */
+  async function buildCandidate(newOsm, center, radiusM) {
     let wayCount = 0;
     for (const el of newOsm.elements || []) if (el.type === 'way') wayCount++;
-    if (wayCount < CONFIG.minKeptWays) return false;
+    if (wayCount < CONFIG.minKeptWays) return null;
     // Elevation for the searched zone (awaited behind the search loading
     // overlay); any failure falls back to flat terrain with a toast.
     let sampler2 = FLAT_SAMPLER;
@@ -185,26 +192,71 @@ async function init() {
       console.warn('[elevation] fetch falló — terreno plano:', err);
       showToast('Sin datos de elevación — terreno plano');
     }
-    let network2;
     try {
-      network2 = buildNetwork(newOsm, center, sampler2);
+      return buildNetwork(newOsm, center, sampler2);
     } catch (err) {
       console.warn('[rebuild] buildNetwork failed:', err);
-      return false;
+      return null;
     }
-    if (network2.edges.size < CONFIG.minCoreEdges) return false;
+  }
+
+  /** V2.1 A validation: enough kept length AND retention vs the fetched roads. */
+  function networkComplete(network) {
+    if (!network || network.edges.size < CONFIG.minCoreEdges) return false;
+    const s = network.graphStats;
+    const keptKm = s.keptDirectedLengthM / 1000;
+    const retention = s.keptDirectedLengthM / Math.max(s.totalDirectedLengthM, 1);
+    return keptKm >= CONFIG.network.minKeptLengthKm && retention >= CONFIG.network.minRetention;
+  }
+
+  /**
+   * Full teardown/rebuild for the map search. Returns true on success,
+   * 'incomplete' when validation failed even after the radius retry, or
+   * false when the OSM data was unusable — the caller keeps the current
+   * world and maps the code to a Spanish toast.
+   */
+  async function rebuildWorld(newOsm, center, radiusM) {
+    let network2 = await buildCandidate(newOsm, center, radiusM);
+    let r = radiusM;
+    if (!networkComplete(network2)) {
+      // ONE auto-retry with radius x1.5 (clamped <= 1200 m): small discs clip
+      // one-way loops and fragment the graph (V2.1 A).
+      const retryR = Math.min(Math.round(radiusM * 1.5), CONFIG.radiusClampM.max);
+      if (retryR > radiusM) {
+        console.info(
+          `[rebuild] red incompleta con radio ${Math.round(radiusM)} m — reintento con ${retryR} m`
+        );
+        try {
+          const retry = await fetchNetworkOsm(center.lat, center.lon, retryR);
+          const cand = await buildCandidate(retry.osm, center, retry.radiusM);
+          if (cand) {
+            network2 = cand;
+            r = retry.radiusM;
+          }
+        } catch (err) {
+          console.warn('[rebuild] reintento Overpass falló:', err);
+        }
+      }
+    }
+    if (!network2) return false;
+    if (!networkComplete(network2)) return 'incomplete';
 
     follow.stop();
     const old = app.world;
     app.world = null; // RAF idles during the swap
     acc = 0;
     if (old) old.dispose();
-    app.view.frame(clampBbox(network2.bbox, radiusM));
-    const world = makeWorld(network2, radiusM);
+    app.view.frame(clampBbox(network2.bbox, r));
+    const world = makeWorld(network2, r);
     app.world = world;
     gui.applyTo(world); // user's demand/speed/cycle settings carry over
     hud.reset();
-    attachBuildings(world, { lat: center.lat, lon: center.lon, radius: radiusM });
+    attachBuildings(world, { lat: center.lat, lon: center.lon, radius: r });
+    if (network2.spawnMode === 'onNetwork') {
+      // Not silent (V2.1 A): zero entries (or exits) -> on-network spawning.
+      console.info('[rebuild] red sin entradas/salidas — generación interna (onNetwork)');
+      showToast('Zona sin conexiones al exterior — generación interna activada');
+    }
     return true;
   }
   createSearch(rebuildWorld);
@@ -271,6 +323,11 @@ async function init() {
         corridorLength: spaceTime.corridorLength,
       };
     },
+    get streetNames() {
+      // V2.1 B e2e hook: label count + the rendered name list.
+      const sn = app.world ? app.world.streetNames : null;
+      return sn ? { count: sn.count, names: sn.names } : null;
+    },
     follow,
     get view() {
       return app.view;
@@ -303,6 +360,7 @@ async function init() {
         nextHeat = now + 1000 / (CONFIG.heatmap.updateHz ?? 1);
         world.roads.updateHeatmap(); // no-op while the heatmap is off
       }
+      world.streetNames.update(app.view.camera); // ~5 Hz gate inside (V2.1 B)
       hud.update();
       chart.update();
       spaceTime.update();
