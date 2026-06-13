@@ -50,6 +50,10 @@ export function createScene(container, bbox) {
   ground.receiveShadow = true;
   scene.add(ground);
 
+  // V3 C2: last framed network center/span — environment.js places the sun
+  // arc around this (stable object, mutated in place by frame()).
+  const frameInfo = { cx: 0, cz: 0, span: 200 };
+
   /**
    * Fit camera / controls / sun shadow frustum / ground to a network bbox.
    * Called at startup and again on every live map swap (Phase 6).
@@ -58,6 +62,9 @@ export function createScene(container, bbox) {
     const cx = (b.minX + b.maxX) / 2;
     const cz = (b.minZ + b.maxZ) / 2;
     const span = Math.max(b.maxX - b.minX, b.maxZ - b.minZ, 200);
+    frameInfo.cx = cx;
+    frameInfo.cz = cz;
+    frameInfo.span = span;
 
     // 45° tilt over the network bbox.
     const dist = span * 0.65;
@@ -98,6 +105,10 @@ export function createScene(container, bbox) {
     controls,
     sun,
     frame,
+    /** V3 C2: {cx, cz, span} of the last framed bbox (sun arc anchor). */
+    getFrameInfo() {
+      return frameInfo;
+    },
     /** Hide the flat ground when a per-world terrain mesh replaces it (F1). */
     setGroundVisible(v) {
       ground.visible = !!v;

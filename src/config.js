@@ -229,6 +229,62 @@ export const CONFIG = {
     updateHz: 5,          // wall-clock fade/LOD update rate inside update(camera)
   },
 
+  // ---- Obras: cierres de calle (V3 C1) ----
+  closures: {
+    recomputeBudgetMs: 50,   // applyClosures(): sync rebuild budget, else chunked
+    chunkExitsPerStep: 8,    // double-buffered chunking: exit tables per step
+    stripePeriodRows: 2,     // hazard stripes alternate every ~2 ribbon vertex rows
+    conesPerEnd: 3,          // cones across the road width at each closure end
+    coneEveryM: 1.1,         // cone spacing along the closure barrier
+  },
+
+  // ---- Incidentes: vehículo fantasma detenido (V3 C1) ----
+  incidents: {
+    durationS: 90,           // default incident lifetime (sim s)
+    phantomLenM: 4.6,        // phantom vehicle length (blocks one lane)
+    preferMultiLane: true,   // weighted lane pick prefers laneCount >= 2
+    hazardBlinkHz: 1.5,      // hazard-light blink frequency (sim-time driven)
+  },
+
+  // ---- Clima (V3 C2) — D5: idm.js reads CONFIG.weather.current every call ----
+  weather: {
+    mode: 'despejado',       // 'despejado' | 'lluvia' (GUI «Clima»)
+    intensity: 0.7,          // GUI «Intensidad de lluvia» 0..1
+    current: { v0Mul: 1, TAdd: 0, bMul: 1 }, // identity = zero behavioral change
+    rain: {
+      v0Mul: 0.8, TAdd: 0.4, bMul: 0.85,     // physics at intensity 1 (lerped)
+      dropCount: 10000, areaM: 280, heightM: 120, fallMs: 60, // GPU-recycled Points
+      fogNear: 350, fogFar: 1400, skyColor: 0x2a313c,
+      asphaltDarken: 0.55,   // roads.setWetness: base color x lerp(1, this, k)
+      sunMul: 0.45, hemiMul: 0.75,
+    },
+  },
+
+  // ---- Ciclo día/noche (V3 C2) — D4: pure apply(hour) from gradient stops ----
+  dayNight: {
+    timeOfDay: 12,           // noon default = exact current scene look (identity)
+    auto: false,             // GUI «Ciclo automático»
+    gameDayMin: 6,           // full 24 h cycle in this many sim minutes
+    // Gradient stops lerped by hour. The h=12 stop mirrors scene.js EXACTLY
+    // (sky/fog 0x101720, hemi 2.1, sun 2.6 @ 0xfff2dd) so apply(12) is
+    // idempotent with the legacy scene. Night = dark blue, dawn/dusk = warm
+    // orange, noon = brightest. {h, sky, fog, hemi, sunI, sunColor}.
+    stops: [
+      { h: 0,  sky: 0x05080f, fog: 0x05080f, hemi: 0.30, sunI: 0.0,  sunColor: 0x8fa3c7 },
+      { h: 5,  sky: 0x0a1020, fog: 0x0a1020, hemi: 0.45, sunI: 0.1,  sunColor: 0xc7b9a0 },
+      { h: 7,  sky: 0x6b3c22, fog: 0x86552f, hemi: 1.00, sunI: 1.2,  sunColor: 0xffa55e },
+      { h: 9,  sky: 0x14202c, fog: 0x14202c, hemi: 1.80, sunI: 2.2,  sunColor: 0xffe9c4 },
+      { h: 12, sky: 0x101720, fog: 0x101720, hemi: 2.10, sunI: 2.6,  sunColor: 0xfff2dd },
+      { h: 17, sky: 0x1c1d22, fog: 0x2a2520, hemi: 1.70, sunI: 2.0,  sunColor: 0xffd9a8 },
+      { h: 19, sky: 0x59301f, fog: 0x6e4226, hemi: 0.90, sunI: 0.9,  sunColor: 0xff8c4a },
+      { h: 21, sky: 0x0a0f1f, fog: 0x0a0f1f, hemi: 0.40, sunI: 0.0,  sunColor: 0x8fa3c7 },
+      { h: 24, sky: 0x05080f, fog: 0x05080f, hemi: 0.30, sunI: 0.0,  sunColor: 0x8fa3c7 },
+    ],
+    headlights: { onBelowSunI: 0.35, poolLenM: 7, poolWidthM: 2.4, dotSize: 0.3 },
+    lamps: { classes: ['primary', 'secondary'], spacingM: 45, maxCount: 240, heightM: 6, glowColor: 0xffc97a },
+    windows: { emissive: 0xffd089, maxIntensity: 0.15 },
+  },
+
   // ---- Rendering ----
   render: {
     roadY: 0.02,

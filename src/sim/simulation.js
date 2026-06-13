@@ -9,8 +9,10 @@
 //     8 s starvation deadlock breaker (§2.4)
 //   - MOBIL discretionary + mandatory lane changes (§2.5)
 //   - edge detectors + global aggregates (§5), sim-speed/pause controls (§2.1)
-// Step order: spawn -> decide (+MOBIL) -> lane changes -> integrate ->
-// transitions/despawn -> detectors.
+//   - street closures with coalesced step-start routing rebuild + incident
+//     phantom vehicles (V3 C1, spec D1/D2)
+// Step order: closure rebuild -> spawn -> decide (+MOBIL) -> lane changes ->
+// integrate -> transitions/despawn -> incident expiry -> detectors.
 // Hot paths are allocation-free: scratch objects are module/closure-level,
 // per-vehicle scratch fields are created once in the vehicle factory.
 
@@ -23,6 +25,7 @@ import { signalState, setSimTime } from './signalsRuntime.js';
 import { mobilDecision } from './mobil.js';
 import { createDetectors } from './detectors.js';
 import { TURN_PRIORITY } from '../network/connectors.js';
+import { createRoutingBuilder } from '../network/routing.js';
 
 const HARD_TRIP_CAP_M = 8000; // safety net against pathological loops
 const MAX_SPAWN_QUEUE = 20; // arrivals kept waiting per entry lane
@@ -38,17 +41,39 @@ export function createSimulation(network) {
 
   const simCfg = CONFIG.sim;
   const mobilCfg = simCfg.mobil;
-  const routing = network.routing;
+  let routing = network.routing; // C1: reassigned by the closure rebuild (D2)
   const hasRouting =
     network.spawnMode === 'entries' && routing.tables && routing.tables.size > 0;
   const detectors = createDetectors(network);
 
+  // ---- Closures & incidents state (V3 C1) ----
+  // ?? fallbacks keep the module green if config blocks are absent (busCfg pattern).
+  const closuresCfg = CONFIG.closures ?? { recomputeBudgetMs: 50, chunkExitsPerStep: 8 };
+  const incidentsCfg = CONFIG.incidents ?? {
+    durationS: 90,
+    phantomLenM: 4.6,
+    preferMultiLane: true,
+  };
+  const closedEdges = new Set(); // closed edge ids (both twins of a pair)
+  const incidents = []; // [{id, lane, s, until, veh}] — veh is the phantom
+  let closuresDirty = false; // closeEdge/openEdge only flag; step() coalesces (D2)
+  let closureVersion = 0; // bumped on every closure/incident change (worksMesh polls)
+  let routingVersion = 0; // bumped on every routing table swap
+  let pendingRoutingBuilder = null; // chunked rebuild in flight (double buffer)
+
   // ---- One-time wiring (stable object shapes for the hot loops) ----
   for (const e of network.edges.values()) {
-    for (const l of e.lanes) l._edge = e;
+    e._closed = false; // C1: closure flag stamped before any hot loop reads it
+    for (const l of e.lanes) {
+      l._edge = e;
+      l._inConnCount = 0; // C1: inbound connectors (incident lane pick)
+    }
   }
   for (const c of network.connectors.values()) {
     c._edge = null;
+    c._outEdge = network.edges.get(c.outEdgeId) ?? null; // C1: closed-guard lookups
+    const toLane = network.lanes.get(c.toLaneId);
+    if (toLane) toLane._inConnCount++;
     const refs = [];
     for (const cf of c.conflicts) {
       const other = network.connectors.get(cf.connectorId);
@@ -118,11 +143,44 @@ export function createSimulation(network) {
   }
 
   // ---- Routing (§1.9) ----
+  /**
+   * C1 closed-guard (D2 layer 2): prefer an OPEN through, then any open
+   * connector. Returns null when every out edge is closed — the vehicle
+   * despawns at the barrier (documented). With zero closures this is
+   * byte-identical to the legacy "first through, else outs[0]".
+   */
   function pickFallbackConn(outs) {
+    let anyOpen = null;
     for (let i = 0; i < outs.length; i++) {
-      if (outs[i].turnType === 'through') return outs[i];
+      const c = outs[i];
+      if (c._outEdge !== null && c._outEdge._closed) continue;
+      if (c.turnType === 'through') return c;
+      if (anyOpen === null) anyOpen = c;
     }
-    return outs[0];
+    return anyOpen;
+  }
+
+  /**
+   * Uniform pick among OPEN connectors (C1). Exactly one rng draw — same
+   * consumption as the legacy `outs[floor(rng*len)]` when nothing is closed.
+   */
+  function pickRandomOpenConn(outs) {
+    if (closedEdges.size === 0) return outs[Math.floor(rng.next() * outs.length)];
+    let n = 0;
+    for (let i = 0; i < outs.length; i++) {
+      const oe = outs[i]._outEdge;
+      if (oe === null || !oe._closed) n++;
+    }
+    if (n === 0) return null;
+    let k = Math.floor(rng.next() * n);
+    for (let i = 0; i < outs.length; i++) {
+      const oe = outs[i]._outEdge;
+      if (oe === null || !oe._closed) {
+        if (k === 0) return outs[i];
+        k--;
+      }
+    }
+    return null;
   }
 
   // ---- Bus stops (F2) ----
@@ -166,30 +224,52 @@ export function createSimulation(network) {
    * toward the nearest lane that has one. Unroutable -> re-route (new exit).
    */
   function setRouteForLane(veh, lane) {
-    veh.mandatory = 0;
     veh.blockT = 0;
     veh.ignoreCount = 0;
     pickNextStop(veh, lane); // F2 — also re-rolled after lane changes
+    resolveRoute(veh, lane);
+  }
+
+  /**
+   * C1 (D2): after a routing table swap, recompute nextConn/mandatory from
+   * the NEW tables without re-rolling the bus-stop choice (pickNextStop) and
+   * without resetting blockT/ignoreCount — preserves micro dwell determinism
+   * and in-flight deadlock-breaker state.
+   */
+  function reresolveRoute(veh) {
+    resolveRoute(veh, veh.seg);
+  }
+
+  function resolveRoute(veh, lane) {
+    veh.mandatory = 0;
     const outs = lane.outConnectors;
     if (!outs.length) {
       veh.nextConn = null; // exit stub / dead end -> despawn at lane end
       return;
     }
     if (veh.exitEdgeId === null) {
-      veh.nextConn = outs[Math.floor(rng.next() * outs.length)];
+      veh.nextConn = pickRandomOpenConn(outs);
       return;
     }
-    let table = routing.tables.get(veh.exitEdgeId);
+    const table = routing.tables.get(veh.exitEdgeId);
     let desired = table ? table.next.get(lane.edgeId) : undefined;
+    // C1 layer-2 guard: a stale table (chunked rebuild still in flight) can
+    // point into a freshly closed edge — treat it as off-route instead.
+    if (desired !== undefined && closedEdges.size > 0 && closedEdges.has(desired)) {
+      desired = undefined;
+    }
     if (desired === undefined) {
       // Off-route (or table missing): re-route from here.
       const ex = routing.pickExit(rng, lane.edgeId);
       veh.exitEdgeId = ex;
       if (ex === null) {
-        veh.nextConn = outs[Math.floor(rng.next() * outs.length)];
+        veh.nextConn = pickRandomOpenConn(outs);
         return;
       }
       desired = routing.tables.get(ex).next.get(lane.edgeId);
+      if (desired !== undefined && closedEdges.size > 0 && closedEdges.has(desired)) {
+        desired = undefined; // stale table still routes into the barrier
+      }
       if (desired === undefined) {
         veh.nextConn = pickFallbackConn(outs);
         return;
@@ -236,6 +316,199 @@ export function createSimulation(network) {
       veh.nextStopS = -1; // bus stops live on real lanes only (F2)
       veh.nextStopIdx = -1;
     }
+  }
+
+  // ---- Closures (V3 C1, D2 layer 3: coalesced step-start rebuild) ----
+  /** Close an edge (and its twin). Only flags + dirties; step() rebuilds. */
+  function closeEdge(id) {
+    const e = network.edges.get(id);
+    if (!e || e._closed) return null;
+    e._closed = true;
+    closedEdges.add(e.id);
+    let twin = null;
+    if (e.twinId != null) {
+      twin = network.edges.get(e.twinId);
+      if (twin) {
+        twin._closed = true;
+        closedEdges.add(twin.id);
+      }
+    }
+    closuresDirty = true;
+    closureVersion++;
+    return twin ? [e.id, twin.id] : [e.id];
+  }
+
+  /** Reopen an edge (and its twin). Same coalesced-rebuild contract. */
+  function openEdge(id) {
+    const e = network.edges.get(id);
+    if (!e || !e._closed) return null;
+    e._closed = false;
+    closedEdges.delete(e.id);
+    let twin = null;
+    if (e.twinId != null) {
+      twin = network.edges.get(e.twinId);
+      if (twin) {
+        twin._closed = false;
+        closedEdges.delete(twin.id);
+      }
+    }
+    closuresDirty = true;
+    closureVersion++;
+    return twin ? [e.id, twin.id] : [e.id];
+  }
+
+  /** Atomic swap of the double-buffered tables + re-resolve routed vehicles. */
+  function finishRoutingSwap(builder) {
+    routing = builder.finish();
+    network.routing = routing; // keep the shared network reference fresh
+    pendingRoutingBuilder = null;
+    routingVersion++;
+    // Vehicles on real lanes re-resolve against the new tables NOW; vehicles
+    // on connectors re-resolve on landing (enterSegment -> setRouteForLane).
+    for (let i = 0; i < vehicles.length; i++) {
+      const veh = vehicles[i];
+      if (!veh.seg.isConnector) reresolveRoute(veh);
+    }
+  }
+
+  /**
+   * Coalesced closure application at step start (never mid-decide). Builds
+   * exit tables synchronously while inside CONFIG.closures.recomputeBudgetMs;
+   * past budget the build continues chunked (chunkExitsPerStep tables/step)
+   * into the fresh double buffer — the OLD tables stay live and safe in the
+   * meantime thanks to the layer-2 closed-guards in resolveRoute.
+   */
+  function applyClosures() {
+    closuresDirty = false;
+    const builder = createRoutingBuilder(
+      network,
+      closedEdges.size > 0 ? closedEdges : null
+    );
+    const t0 = performance.now();
+    let done = builder.build(1);
+    while (!done && performance.now() - t0 < closuresCfg.recomputeBudgetMs) {
+      done = builder.build(1);
+    }
+    if (done) finishRoutingSwap(builder);
+    else pendingRoutingBuilder = builder; // continue on the following steps
+  }
+
+  // ---- Incidents (V3 C1, D1: phantom vehicle in lane.vehicles ONLY) ----
+  /**
+   * Edge weight for the random incident pick: whole-edge occupancy x road
+   * class x multi-lane preference. Instantaneous LANE occupancy alone proved
+   * useless (most lanes show 0 at any given instant — measured: a "weighted"
+   * pick landed on an edge with zero flow for 200 sim-s); edge occupancy plus
+   * the class prior reliably targets streets that actually carry traffic.
+   */
+  function incidentEdgeWeight(edge) {
+    if (edge._closed) return 0; // never on a closed street
+    if (!edge.lanes.length || edge.lanes[0].length < 30) return 0; // room to queue
+    let occ = 0;
+    for (let i = 0; i < edge.lanes.length; i++) occ += edge.lanes[i].vehicles.length;
+    let w = (CONFIG.classWeights[edge.highwayClass] || 1) * (1 + 2 * occ);
+    if (incidentsCfg.preferMultiLane && edge.lanes.length >= 2) w *= 4;
+    return w;
+  }
+
+  /** Weighted edge pick, then that edge's busiest lane ("most vehicles"). */
+  function pickIncidentLane() {
+    let total = 0;
+    for (const e of network.edges.values()) total += incidentEdgeWeight(e);
+    if (total <= 0) return null;
+    let r = rng.next() * total;
+    let chosen = null;
+    for (const e of network.edges.values()) {
+      const w = incidentEdgeWeight(e);
+      if (w <= 0) continue;
+      chosen = e;
+      r -= w;
+      if (r <= 0) break;
+    }
+    if (chosen === null) return null;
+    // The lane traffic actually FEEDS: inbound connectors weigh double the
+    // instantaneous occupancy (measured: a busiest-now lane with zero inbound
+    // connectors starves — the queue would form on the sibling, not behind
+    // the phantom).
+    let lane = chosen.lanes[0];
+    let bestScore = -1;
+    for (let i = 0; i < chosen.lanes.length; i++) {
+      const l = chosen.lanes[i];
+      const score = 2 * l._inConnCount + l.vehicles.length;
+      if (score > bestScore) {
+        bestScore = score;
+        lane = l;
+      }
+    }
+    return lane;
+  }
+
+  /** Mid-lane s nudged into the largest free gap (bumpers kept clear). */
+  function findIncidentS(lane, len) {
+    const arr = lane.vehicles; // sorted by s DESC
+    const margin = len / 2 + 1;
+    let bestLo = 0;
+    let bestHi = lane.length;
+    let bestSize = -1;
+    let hi = lane.length; // top of the gap currently being scanned
+    for (let i = 0; i <= arr.length; i++) {
+      const lo = i < arr.length ? arr[i].s + arr[i].len / 2 : 0;
+      if (hi - lo > bestSize) {
+        bestSize = hi - lo;
+        bestLo = lo;
+        bestHi = hi;
+      }
+      if (i < arr.length) hi = arr[i].s - arr[i].len / 2;
+    }
+    let lo = bestLo + margin;
+    let hi2 = bestHi - margin;
+    if (hi2 < lo) {
+      lo = (bestLo + bestHi) / 2; // gap tighter than the margins: center it
+      hi2 = lo;
+    }
+    return clamp(lane.length / 2, lo, hi2);
+  }
+
+  /**
+   * Stop a phantom vehicle on one lane for `durationS` (D1). The phantom is
+   * inserted ONLY into lane.vehicles — followers (IDM), cross-connector
+   * lookahead and MOBIL see it automatically; integrate/render/global
+   * metrics never do, because it never joins the master vehicles[] array.
+   */
+  function triggerIncident(opts) {
+    const durationS =
+      opts && opts.durationS !== undefined ? opts.durationS : incidentsCfg.durationS;
+    let lane = null;
+    if (opts && opts.laneId != null) {
+      const l = network.lanes.get(opts.laneId);
+      if (l && !l.isConnector && !l._edge._closed) lane = l;
+    }
+    if (lane === null) lane = pickIncidentLane();
+    if (lane === null) return null;
+    const phantom = createVehicle(rng, lane, 'sedan'); // seg/prevSeg = lane
+    phantom.isPhantom = true;
+    phantom.v = 0;
+    phantom.len = incidentsCfg.phantomLenM;
+    phantom.nextConn = null;
+    phantom.s = findIncidentS(lane, phantom.len);
+    phantom.prevS = phantom.s;
+    insertSorted(lane.vehicles, phantom); // lane ONLY — never vehicles[] (D1)
+    const rec = { id: phantom.id, lane, s: phantom.s, until: time + durationS, veh: phantom };
+    incidents.push(rec);
+    closureVersion++; // worksMesh polls this for cones + hazard blinkers
+    return { id: phantom.id, laneId: lane.id, edgeId: lane.edgeId, s: phantom.s, until: rec.until };
+  }
+
+  function removeIncidentAt(i) {
+    const rec = incidents[i];
+    rec.veh._gone = true;
+    removeFromSeg(rec.veh);
+    removeAt(incidents, i);
+    closureVersion++;
+  }
+
+  function clearIncidents() {
+    for (let i = incidents.length - 1; i >= 0; i--) removeIncidentAt(i);
   }
 
   // ---- Signals (§2.3) ----
@@ -473,6 +746,24 @@ export function createSimulation(network) {
       return true;
     }
     // Real lane end.
+    // C1 safety net: never enter a connector whose out edge closed after the
+    // route was cached — re-resolve; if every option is closed the vehicle
+    // despawns at the barrier (D2, documented).
+    if (
+      veh.nextConn !== null &&
+      closedEdges.size > 0 &&
+      veh.nextConn._outEdge !== null &&
+      veh.nextConn._outEdge._closed
+    ) {
+      reresolveRoute(veh);
+      if (
+        veh.nextConn !== null &&
+        veh.nextConn._outEdge !== null &&
+        veh.nextConn._outEdge._closed
+      ) {
+        veh.nextConn = null;
+      }
+    }
     if (!veh.nextConn || veh.tripDist > HARD_TRIP_CAP_M) {
       removeVehicle(veh); // reached exit stub / dead end / safety cap
       return false;
@@ -532,6 +823,15 @@ export function createSimulation(network) {
 
   function step(dt) {
     const t0 = performance.now();
+    // C1 (D2): closures apply COALESCED at step start — never mid-decide.
+    if (closuresDirty) {
+      applyClosures();
+    } else if (
+      pendingRoutingBuilder !== null &&
+      pendingRoutingBuilder.build(closuresCfg.chunkExitsPerStep)
+    ) {
+      finishRoutingSwap(pendingRoutingBuilder);
+    }
     // 0) snapshot step-start state for render interpolation (§2.1).
     for (let i = 0; i < vehicles.length; i++) {
       const veh = vehicles[i];
@@ -542,6 +842,7 @@ export function createSimulation(network) {
     const lambda = demandVehPerHour / 3600;
     for (let i = 0; i < spawnLanes.length; i++) {
       const e = spawnLanes[i];
+      if (e.lane._edge._closed) continue; // C1: closed entry — nobody new gets in
       if (rng.next() < lambda * e.share * dt && e.queued < MAX_SPAWN_QUEUE) e.queued++;
       if (e.queued > 0 && trySpawn(e)) e.queued--;
     }
@@ -552,6 +853,12 @@ export function createSimulation(network) {
       for (let i = 0; i < arr.length; i++) {
         const veh = arr[i];
         veh._lcTo = null;
+        if (veh.isPhantom) {
+          // D1: the phantom never moves or decides; followers/MOBIL see it
+          // as a regular stopped leader with zero extra code.
+          veh._a = 0;
+          continue;
+        }
         const leader = i > 0 ? arr[i - 1] : null;
         const aCar = decide(veh, leader);
         if (!seg.isConnector) {
@@ -600,9 +907,13 @@ export function createSimulation(network) {
         if (!transition(seg.vehicles[0])) break;
       }
     }
-    // 5) clock + detectors/metrics.
+    // 5) clock + incident expiry + detectors/metrics.
     time += dt;
     setSimTime(time);
+    // C1: expire incidents (reverse loop, allocation-free removeAt).
+    for (let i = incidents.length - 1; i >= 0; i--) {
+      if (time >= incidents[i].until) removeIncidentAt(i);
+    }
     detectors.update(time, vehicles, network.totalLaneKm);
     lastStepMs = performance.now() - t0;
   }
@@ -644,6 +955,23 @@ export function createSimulation(network) {
       const veh = vehicles[0];
       const p = veh.seg.posAt(veh.s); // {x,y,z} — y = elevation (F1)
       return { id: veh.id, x: p.x, y: p.y, z: p.z, v: veh.v, segId: veh.seg.id, s: veh.s };
+    },
+    // ---- Closures & incidents (V3 C1) ----
+    closeEdge,
+    openEdge,
+    get closedEdges() {
+      return closedEdges;
+    },
+    triggerIncident,
+    clearIncidents,
+    get incidents() {
+      return incidents;
+    },
+    get closureVersion() {
+      return closureVersion;
+    },
+    get routingVersion() {
+      return routingVersion;
     },
   };
 }

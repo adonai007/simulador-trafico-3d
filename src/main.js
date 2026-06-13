@@ -20,6 +20,9 @@ import { createDebugOverlay } from './render/debug.js';
 import { createSignalsMesh } from './render/signalsMesh.js';
 import { createVehiclesMesh } from './render/vehiclesMesh.js';
 import { createBusStopsMesh } from './render/busStopsMesh.js';
+import { createWorksMesh } from './render/worksMesh.js'; // C1: cones + hazards
+import { createStreetLampsMesh } from './render/streetLampsMesh.js'; // C2
+import { createEnvironment } from './render/environment.js'; // C2
 import { createStreetNames } from './render/streetNames.js';
 import { addBuildings } from './render/buildings.js';
 import { createPicking } from './render/picking.js';
@@ -37,7 +40,8 @@ window.__SIM__ = { ready: false };
 const DT = CONFIG.sim.dt;
 
 // app.world is the swappable unit: network + sim + all per-network meshes.
-const app = { view: null, world: null };
+// app.environment (C2) is app-owned and survives world swaps (D4).
+const app = { view: null, world: null, environment: null };
 
 /** Camera-fit bbox: clamp to the query radius so boundary stubs don't zoom us out. */
 function clampBbox(bbox, r) {
@@ -73,6 +77,17 @@ function makeWorld(network, radiusM) {
   const vehiclesMesh = createVehiclesMesh(sim);
   view.scene.add(vehiclesMesh.mesh);
 
+  // --- C1 --- worksMesh (cones + hazard blinkers, per-world): polls
+  // sim.closureVersion inside update(simTime) — needs the sim reference.
+  const worksMesh = createWorksMesh(network, sim);
+  view.scene.add(worksMesh.group);
+  // --- end C1 ---
+
+  // --- C2 --- streetLampsMesh (poles + glows + ground pools, per-world).
+  const streetLampsMesh = createStreetLampsMesh(network);
+  view.scene.add(streetLampsMesh.group);
+  // --- end C2 ---
+
   const world = {
     network,
     sim,
@@ -83,6 +98,8 @@ function makeWorld(network, radiusM) {
     busStopsMesh,
     streetNames,
     vehiclesMesh,
+    worksMesh, // C1: per-world cones/hazards
+    streetLampsMesh, // C2: per-world lamps (null until C2 lands)
     buildings: null,
     radiusM,
     dispose() {
@@ -103,6 +120,18 @@ function makeWorld(network, radiusM) {
       streetNames.dispose();
       view.scene.remove(vehiclesMesh.mesh);
       vehiclesMesh.dispose();
+      // --- C1 ---
+      if (world.worksMesh) {
+        view.scene.remove(world.worksMesh.group);
+        world.worksMesh.dispose();
+      }
+      // --- end C1 ---
+      // --- C2 ---
+      if (world.streetLampsMesh) {
+        view.scene.remove(world.streetLampsMesh.group);
+        world.streetLampsMesh.dispose();
+      }
+      // --- end C2 ---
       if (world.buildings) {
         world.buildings.dispose();
         world.buildings = null;
@@ -123,8 +152,14 @@ function makeWorld(network, radiusM) {
 function attachBuildings(world, opts) {
   addBuildings(app.view.scene, opts, world.network.elevation)
     .then((b) => {
-      if (app.world === world) world.buildings = b;
-      else b.dispose();
+      if (app.world === world) {
+        world.buildings = b;
+        // --- C2 --- re-apply window emissive to the freshly attached buildings.
+        app.environment?.refreshWorld?.();
+        // --- end C2 ---
+      } else {
+        b.dispose();
+      }
     })
     .catch((err) => console.warn('[buildings] fallo:', err));
 }
@@ -158,6 +193,11 @@ async function init() {
   const network = buildNetwork(osm, CONFIG.defaultCenter, sampler);
   const r = CONFIG.defaultRadiusM;
   app.view = createScene(document.getElementById('app'), clampBbox(network.bbox, r));
+  // --- C2 --- app-owned environment (day/night + weather), created ONCE here.
+  // It reaches per-world pieces (roads/lamps/buildings) lazily via the getter,
+  // so it survives world swaps with no re-wiring (D4).
+  app.environment = createEnvironment(app.view, () => app.world);
+  // --- end C2 ---
   app.world = makeWorld(network, r);
   attachBuildings(app.world, null); // bundled snapshot
 
@@ -168,13 +208,30 @@ async function init() {
   const chart = createChart(app);
   const spaceTime = createSpaceTime(app);
   const follow = createFollow(app);
+  // --- C1 --- picking opts: obras mode raycasts the road ribbon instead of
+  // vehicles. The extra arg is ignored by the legacy createPicking signature;
+  // agent C1 extends createPicking(view, getVehiclesMesh, onPick, opts) and
+  // fills onRoadPick (toggle close/open + notifyClosuresChanged).
+  const pickingOpts = {
+    isObrasMode: () => !!gui.params.modoObras,
+    getRoads: () => (app.world ? app.world.roads : null),
+    onRoadPick: (hit) => {
+      const w = app.world;
+      if (!w || !hit || !hit.edge) return;
+      if (w.sim.closedEdges?.has(hit.edge.id)) w.sim.openEdge?.(hit.edge.id);
+      else w.sim.closeEdge?.(hit.edge.id);
+      w.roads.notifyClosuresChanged?.();
+    },
+  };
+  // --- end C1 ---
   createPicking(
     app.view,
     () => app.world && app.world.vehiclesMesh,
     (veh) => {
       if (veh) follow.follow(veh);
       else follow.stop();
-    }
+    },
+    pickingOpts // C1 (inert today: legacy signature ignores it)
   );
 
   /** One build attempt: elevation fetch + buildNetwork. null -> unusable OSM. */
@@ -332,6 +389,57 @@ async function init() {
     get view() {
       return app.view;
     },
+
+    // --- C1 --- closures & incidents hooks (no-ops until sim APIs land).
+    closeEdge: (id) => {
+      const w = app.world;
+      if (!w || !w.sim.closeEdge) return null;
+      const r = w.sim.closeEdge(id);
+      w.roads.notifyClosuresChanged?.();
+      return r;
+    },
+    openEdge: (id) => {
+      const w = app.world;
+      if (!w || !w.sim.openEdge) return null;
+      const r = w.sim.openEdge(id);
+      w.roads.notifyClosuresChanged?.();
+      return r;
+    },
+    get closedEdges() {
+      return app.world?.sim.closedEdges ?? null;
+    },
+    triggerIncident: (opts) => app.world?.sim.triggerIncident?.(opts) ?? null,
+    clearIncidents: () => app.world?.sim.clearIncidents?.(),
+    get incidents() {
+      return app.world?.sim.incidents ?? null;
+    },
+    get closureVersion() {
+      return app.world?.sim.closureVersion ?? 0;
+    },
+    get routingVersion() {
+      return app.world?.sim.routingVersion ?? 0;
+    },
+    // --- end C1 ---
+
+    // --- C2 --- weather & day/night hooks (no-ops until app.environment lands).
+    setWeather: (mode, intensity) => app.environment?.setWeather?.(mode, intensity),
+    get weather() {
+      return {
+        mode: CONFIG.weather.mode,
+        intensity: CONFIG.weather.intensity,
+        current: CONFIG.weather.current,
+      };
+    },
+    setTimeOfDay: (h) => app.environment?.setTimeOfDay?.(h),
+    get timeOfDay() {
+      return CONFIG.dayNight.timeOfDay;
+    },
+    get environment() {
+      // C2 fills environment.state: {nightFactor, sunIntensity, headlightCount,
+      // rainVisible, lampGlowVisible}.
+      return app.environment?.state ?? null;
+    },
+    // --- end C2 ---
   };
 
   // ---- Fixed-timestep loop with accumulator + interpolation (spec §2.1) ----
@@ -355,7 +463,16 @@ async function init() {
       if (steps === CONFIG.sim.maxStepsPerFrame) acc = 0; // drop remainder when capped
       const alpha = Math.min(acc / DT, 1);
       world.signalsMesh.update(sim.time);
-      world.vehiclesMesh.update(alpha);
+      // --- C2 --- environment ramp (~10 Hz gate inside) + headlight factor
+      // for vehiclesMesh (gated on sunI < onBelowSunI, NOT on the broader
+      // nightFactor — headlights pop on later than lamps, ~20:00 vs ~17:45).
+      app.environment?.update?.(sim, wallDt, app.view.camera);
+      const nightFactor = app.environment?.state?.headlightFactor ?? 0;
+      // --- end C2 ---
+      world.vehiclesMesh.update(alpha, nightFactor);
+      // --- C1 --- cones refresh on closureVersion change + hazard blink.
+      world.worksMesh?.update?.(sim.time);
+      // --- end C1 ---
       if (now >= nextHeat) {
         nextHeat = now + 1000 / (CONFIG.heatmap.updateHz ?? 1);
         world.roads.updateHeatmap(); // no-op while the heatmap is off

@@ -29,6 +29,12 @@ const _right = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
 const _bUp = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
+// C2 headlights: DEDICATED scratch — the brake block destroys _right/_bUp/_fwd
+// by in-place scaling, so headlight instances are emitted BEFORE it using
+// these copies for scaling (never aliasing the body basis).
+const _r2 = new THREE.Vector3();
+const _u2 = new THREE.Vector3();
+const _f2 = new THREE.Vector3();
 const _color = new THREE.Color();
 const _c = new THREE.Color();
 // ALL pose scratch carries y from creation (F1) — stable hidden classes.
@@ -295,6 +301,22 @@ const BRAKE_DIMS = {
 
 const BRAKE_ON_ACCEL = -1.0; // m/s² (brief: light on when _a < -1)
 
+// C2 headlight positions per type: {x: half-spacing, y, z: front} in
+// vehicle-local space, mirroring the baked COL_HEADLIGHT boxes of each
+// builder (BRAKE_DIMS pattern).
+const HEAD_DIMS = {
+  sedan: { x: 0.6, y: 0.78, z: 2.27 },
+  hatchback: { x: 0.55, y: 0.78, z: 1.97 },
+  suv: { x: 0.65, y: 0.95, z: 2.37 },
+  taxi: { x: 0.6, y: 0.78, z: 2.27 },
+  micro: { x: 0.85, y: 0.95, z: 3.54 },
+  camion: { x: 0.85, y: 1.05, z: 4.88 },
+  car: { x: 0.6, y: 0.78, z: 2.27 },
+  truck: { x: 0.85, y: 1.05, z: 4.88 },
+  sport: { x: 0.55, y: 0.78, z: 1.97 },
+};
+const POOL_BASE_OPACITY = 0.5; // × headlight factor each update
+
 export function createVehiclesMesh(sim) {
   const capacity = CONFIG.render.vehicleCapacityPerType;
   // Mesh order MUST match TYPE_INDEX order (= CONFIG.vehicleTypes key order):
@@ -344,6 +366,37 @@ export function createVehiclesMesh(sim) {
   group.add(brakeMesh);
   const brakeDims = typeNames.map((t) => BRAKE_DIMS[t] || BRAKE_DIMS.sedan);
 
+  // C2 headlights (night only): warm dot boxes at the baked headlight spots +
+  // ONE additive ground-pool quad ahead of each vehicle. Never real lights —
+  // +2 draw calls at night, both meshes hidden (count 0) by day.
+  const HL = CONFIG.dayNight.headlights;
+  const headDims = typeNames.map((t) => HEAD_DIMS[t] || HEAD_DIMS.sedan);
+  const headPoolCapacity = brakeCapacity;
+  const headDotGeom = new THREE.BoxGeometry(1, 1, 1);
+  const headDotMat = new THREE.MeshBasicMaterial({ color: 0xfff3c8 });
+  const headDotsMesh = new THREE.InstancedMesh(headDotGeom, headDotMat, headPoolCapacity * 2);
+  headDotsMesh.count = 0;
+  headDotsMesh.frustumCulled = false;
+  headDotsMesh.castShadow = false;
+  headDotsMesh.visible = false;
+  group.add(headDotsMesh);
+  const headPoolGeom = new THREE.PlaneGeometry(1, 1);
+  headPoolGeom.rotateX(-Math.PI / 2); // flat, +Y normal; X = width, Z = length
+  const headPoolMat = new THREE.MeshBasicMaterial({
+    color: 0xffe9b0,
+    transparent: true,
+    opacity: POOL_BASE_OPACITY,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const headPoolMesh = new THREE.InstancedMesh(headPoolGeom, headPoolMat, headPoolCapacity);
+  headPoolMesh.count = 0;
+  headPoolMesh.frustumCulled = false;
+  headPoolMesh.castShadow = false;
+  headPoolMesh.visible = false;
+  group.add(headPoolMesh);
+  let lastHeadlightCount = 0; // vehicles with lit headlights (test hook)
+
   // instanceId -> vehicle, per type (rebuilt every frame; used by picking).
   const instanceIdToVehicle = typeNames.map(() => new Array(capacity).fill(null));
   const counts = new Array(typeNames.length).fill(0);
@@ -354,13 +407,23 @@ export function createVehiclesMesh(sim) {
     meshes, // [sedan, hatchback, suv, taxi, micro, camion] for raycast picking
     brakeMesh,
     instanceIdToVehicle,
+    /** Last frame's count of vehicles with lit headlights (C2 e2e hook). */
+    get headlightCount() {
+      return lastHeadlightCount;
+    },
     /**
      * Sync instance matrices/colors from sim vehicles. `alpha` = accumulator
      * fraction acc/DT in [0,1] for §2.1 interpolation (defaults to 1 = snap).
+     * `nightFactor` (C2) = environment headlight factor: 0 by day (both
+     * headlight meshes stay at count 0 — zero cost), >0 at dusk/night.
      */
-    update(alpha = 1) {
+    update(alpha = 1, nightFactor = 0) {
       for (let k = 0; k < counts.length; k++) counts[k] = 0;
       let brakeCount = 0;
+      let headDotCount = 0;
+      let headPoolCount = 0;
+      const headsOn = nightFactor > 0.01;
+      if (headsOn) headPoolMat.opacity = POOL_BASE_OPACITY * nightFactor;
       const vehicles = sim.vehicles;
       const t = sim.time;
       for (let i = 0; i < vehicles.length; i++) {
@@ -392,6 +455,46 @@ export function createVehiclesMesh(sim) {
         _color.setRGB(veh.color.r, veh.color.g, veh.color.b);
         mesh.setColorAt(idx, _color);
         instanceIdToVehicle[ti][idx] = veh;
+        // C2 headlights — MUST run BEFORE the brake block below: that block
+        // destroys _right/_bUp/_fwd by in-place scaling. Scaling here goes
+        // through the dedicated _r2/_u2/_f2 copies; the body basis and
+        // px/pz/_p.y are still pristine at this point.
+        if (headsOn && headPoolCount < headPoolCapacity) {
+          const hd = headDims[ti];
+          const cy = _p.y + 0.05; // body matrix lift (same as setPosition above)
+          // Two warm dot boxes at the baked headlight positions.
+          _r2.copy(_right).multiplyScalar(HL.dotSize * 1.25);
+          _u2.copy(_bUp).multiplyScalar(HL.dotSize * 0.55);
+          _f2.copy(_fwd).multiplyScalar(0.1);
+          _m.makeBasis(_r2, _u2, _f2);
+          const fx = _fwd.x * hd.z + _bUp.x * hd.y;
+          const fy = _fwd.y * hd.z + _bUp.y * hd.y;
+          const fz = _fwd.z * hd.z + _bUp.z * hd.y;
+          _m.setPosition(
+            px + fx - _right.x * hd.x,
+            cy + fy - _right.y * hd.x,
+            pz + fz - _right.z * hd.x
+          );
+          headDotsMesh.setMatrixAt(headDotCount++, _m);
+          _m.setPosition(
+            px + fx + _right.x * hd.x,
+            cy + fy + _right.y * hd.x,
+            pz + fz + _right.z * hd.x
+          );
+          headDotsMesh.setMatrixAt(headDotCount++, _m);
+          // Additive light pool on the asphalt ahead of the nose.
+          _r2.copy(_right).multiplyScalar(HL.poolWidthM);
+          _u2.copy(_bUp);
+          _f2.copy(_fwd).multiplyScalar(HL.poolLenM);
+          _m.makeBasis(_r2, _u2, _f2);
+          const pd = hd.z + HL.poolLenM / 2;
+          _m.setPosition(
+            px + _fwd.x * pd,
+            _p.y + 0.08 + _fwd.y * pd,
+            pz + _fwd.z * pd
+          );
+          headPoolMesh.setMatrixAt(headPoolCount++, _m);
+        }
         // Brake light: decelerating hard, or held at ~standstill (queue/red).
         if (
           (veh._a < BRAKE_ON_ACCEL || (veh.v < 0.3 && veh._a < 0.4)) &&
@@ -418,12 +521,23 @@ export function createVehiclesMesh(sim) {
       }
       brakeMesh.count = brakeCount;
       brakeMesh.instanceMatrix.needsUpdate = true;
+      headDotsMesh.count = headDotCount;
+      headDotsMesh.visible = headDotCount > 0;
+      headDotsMesh.instanceMatrix.needsUpdate = true;
+      headPoolMesh.count = headPoolCount;
+      headPoolMesh.visible = headPoolCount > 0;
+      headPoolMesh.instanceMatrix.needsUpdate = true;
+      lastHeadlightCount = headPoolCount;
     },
     dispose() {
       for (const g of geoms) g.dispose();
       mat.dispose();
       brakeGeom.dispose();
       brakeMat.dispose();
+      headDotGeom.dispose();
+      headDotMat.dispose();
+      headPoolGeom.dispose();
+      headPoolMat.dispose();
     },
   };
 }

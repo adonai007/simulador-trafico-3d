@@ -28,6 +28,15 @@ export function createGui(app) {
     paradaMediaS: CONFIG.busStops.meanDwellS,
     mapaCalor: !!CONFIG.heatmap.enabled,
     nombresCalles: CONFIG.streetNames.enabled !== false,
+    // --- C1 --- (obras e incidentes)
+    modoObras: false, // read by picking opts in main.js (isObrasMode)
+    // --- end C1 ---
+    // --- C2 --- (clima y hora)
+    clima: CONFIG.weather.mode,
+    intensidadLluvia: CONFIG.weather.intensity,
+    horaDelDia: CONFIG.dayNight.timeOfDay,
+    cicloAutomatico: !!CONFIG.dayNight.auto,
+    // --- end C2 ---
   };
 
   const retime = () =>
@@ -87,10 +96,78 @@ export function createGui(app) {
       retime();
     });
 
+  // --- C1 --- «Obras e incidentes» (modoObras is read live by the picking
+  // opts in main.js; closures repaint via roads.notifyClosuresChanged).
+  const fObras = gui.addFolder('Obras e incidentes');
+  fObras.add(params, 'modoObras').name('Modo obras (clic en calle) 🚧');
+  fObras
+    .add(
+      {
+        incidente() {
+          const sim = app.world?.sim;
+          if (!sim?.triggerIncident) return;
+          // Followed vehicle's lane when it's a REAL lane (spec C1);
+          // otherwise the sim's weighted pick (busy multi-lane preferred).
+          const fv = window.__SIM__?.follow?.vehicle ?? null;
+          const laneId =
+            fv && !fv._gone && fv.seg && !fv.seg.isConnector ? fv.seg.id : null;
+          sim.triggerIncident(laneId !== null ? { laneId } : undefined);
+        },
+      },
+      'incidente'
+    )
+    .name('Provocar incidente');
+  fObras
+    .add(
+      {
+        reabrir() {
+          const sim = app.world?.sim;
+          if (!sim) return;
+          if (sim.closedEdges) {
+            for (const id of [...sim.closedEdges]) sim.openEdge?.(id);
+          }
+          sim.clearIncidents?.();
+          app.world?.roads.notifyClosuresChanged?.();
+        },
+      },
+      'reabrir'
+    )
+    .name('Reabrir todo');
+  fObras.close();
+  // NOTE: closures/incidents are per-network runtime state (cleared on world
+  // swap) — intentionally NOTHING about them in applyTo().
+  // --- end C1 ---
+
+  // --- C2 --- «Clima y hora» (controls are ?.-guarded no-ops until
+  // app.environment lands; agent C2 fills ONLY inside this block).
+  const fClima = gui.addFolder('Clima y hora');
+  fClima
+    .add(params, 'clima', ['despejado', 'lluvia'])
+    .name('Clima')
+    .onChange((v) => app.environment?.setWeather?.(v, params.intensidadLluvia));
+  fClima
+    .add(params, 'intensidadLluvia', 0, 1, 0.05)
+    .name('Intensidad de lluvia')
+    .onChange((v) => app.environment?.setWeather?.(params.clima, v));
+  fClima
+    .add(params, 'horaDelDia', 0, 24, 0.25)
+    .name('Hora del día')
+    .onChange((h) => app.environment?.setTimeOfDay?.(h));
+  fClima
+    .add(params, 'cicloAutomatico')
+    .name('Ciclo automático')
+    .onChange((v) => app.environment?.setAuto?.(v));
+  fClima.close();
+  // --- end C2 ---
+
   // --- Vista ---
   const fView = gui.addFolder('Vista');
   fView.add(params, 'sombras').name('Sombras').onChange((v) => {
-    app.view.sun.castShadow = v;
+    // --- C2 --- environment owns sun.castShadow once it lands (night gate);
+    // until then the legacy direct toggle keeps behavior identical.
+    if (app.environment?.setShadowsEnabled) app.environment.setShadowsEnabled(v);
+    else app.view.sun.castShadow = v;
+    // --- end C2 ---
   });
   fView
     .add(params, 'verCarriles')
@@ -123,6 +200,9 @@ export function createGui(app) {
       world.debug.setConnectorsVisible(params.verConectores);
       world.roads.setHeatmap(params.mapaCalor);
       world.streetNames.setVisible(params.nombresCalles);
+      // --- C2 --- re-apply weather/hour/wetness/lamps to the fresh world.
+      app.environment?.applyTo?.(world);
+      // --- end C2 ---
     },
     dispose() {
       gui.destroy();

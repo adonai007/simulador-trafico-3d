@@ -113,7 +113,10 @@ export function createDetectors(network) {
     for (let i = 0; i < detectors.length; i++) {
       const d = detectors[i];
       let n = 0;
-      for (let j = 0; j < d.lanes.length; j++) n += d.lanes[j].vehicles.length;
+      for (let j = 0; j < d.lanes.length; j++) {
+        const vehs = d.lanes[j].vehicles;
+        for (let v = 0; v < vehs.length; v++) if (!vehs[v].isPhantom) n++; // C1: skip phantoms
+      }
       if (d.occCount === occCap) {
         d.occSum -= d.occ[d.occIdx];
       } else {
@@ -166,8 +169,11 @@ export function createDetectors(network) {
       let vSum = 0;
       for (let j = 0; j < lanes.length; j++) {
         const vehs = lanes[j].vehicles;
-        for (let v = 0; v < vehs.length; v++) vSum += vehs[v].v;
-        count += vehs.length;
+        for (let v = 0; v < vehs.length; v++) {
+          if (vehs[v].isPhantom) continue; // C1: incident phantoms don't skew the EWMA
+          vSum += vehs[v].v;
+          count++;
+        }
       }
       const target = count ? vSum / count / e.speedMs : 1;
       e._speedRatio += ratioK * (target - e._speedRatio);

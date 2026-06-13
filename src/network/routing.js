@@ -2,7 +2,7 @@
 // exit. Edge adjacency is derived from the ACTUAL turn connectors (so pruned
 // U-turns are never routed) — buildRouting must run after buildConnectors.
 //
-//   buildRouting(graph) -> {
+//   buildRouting(graph, closedSet = null) -> {
 //     nextEdge: Map(exitEdgeId -> Map(edgeId -> nextEdgeId)),   // spec contract
 //     tables:   Map(exitEdgeId -> { next, costS, distM }),      // rich view
 //     exits:    [{nodeId, edgeId, weight}],
@@ -12,6 +12,14 @@
 // cost = edge traversal time (lengthM / speedMs) + connector traversal time.
 // distM tracks meters along the chosen shortest-time path (used for the
 // distance-biased exit pick).
+//
+// V3 C1 closures (spec D2 layer 1): `closedSet` is a Set of closed edge ids.
+// Adjacency records whose OUT edge is closed are skipped (nothing ever routes
+// INTO a closed edge) but records whose PREV edge is closed are KEPT — a
+// closed edge stays a valid Dijkstra source so vehicles already on it get
+// next-hops OUT, while it can never be an intermediate. `exits` is filtered
+// of closed edges. `createRoutingBuilder` exposes the same build split into
+// per-exit chunks for the budgeted, double-buffered rebuild in simulation.js.
 
 import { CONFIG } from '../config.js';
 
@@ -61,12 +69,19 @@ function createHeap() {
   };
 }
 
-export function buildRouting(graph) {
+/**
+ * Incremental routing build: same output as buildRouting, computed one exit
+ * table per `build(k)` chunk (V3 C1 — budgeted closure rebuild, spec D2).
+ * The result Maps are FRESH (double buffer): the live routing object stays
+ * untouched until the caller atomically swaps in `finish()`.
+ */
+export function createRoutingBuilder(graph, closedSet = null) {
   const edges = graph.edges;
 
   // Reverse adjacency from connectors: revAdj.get(edgeB) = predecessors
   // [{prev, w, m}] where w/m = cost/meters of traversing prev edge + the
-  // cheapest connector prev->B.
+  // cheapest connector prev->B. Closed OUT edges are skipped (D2 layer 1);
+  // closed PREV edges are kept (next-hops OUT of a closed edge stay valid).
   const revAdj = new Map();
   for (const e of edges.values()) revAdj.set(e.id, []);
   const best = new Map(); // "in_out" -> record
@@ -74,6 +89,7 @@ export function buildRouting(graph) {
     const eCost = e.lengthM / Math.max(e.speedMs, 0.5);
     for (const lane of e.lanes) {
       for (const c of lane.outConnectors) {
+        if (closedSet !== null && closedSet.has(c.outEdgeId)) continue; // never INTO closed
         const w = eCost + c.length / Math.max(c.speedMs, 0.5);
         const key = `${e.id}_${c.outEdgeId}`;
         const prev = best.get(key);
@@ -123,15 +139,17 @@ export function buildRouting(graph) {
     return { next, costS, distM };
   }
 
+  // Exits filtered of closed edges (D2 layer 1): no traffic is routed toward
+  // a barrier; vehicles whose exit just closed re-route on their next lane.
+  const exits =
+    closedSet !== null && closedSet.size > 0
+      ? graph.exits.filter((ex) => !closedSet.has(ex.edgeId))
+      : graph.exits;
+
   const tables = new Map();
   const nextEdge = new Map();
-  for (const ex of graph.exits) {
-    const t = dijkstraFrom(ex.edgeId);
-    tables.set(ex.edgeId, t);
-    nextEdge.set(ex.edgeId, t.next);
-  }
+  let exitCursor = 0; // next exit table to compute
 
-  const exits = graph.exits;
   const distExp = CONFIG.sim.spawn.exitDistExponent;
 
   /**
@@ -160,5 +178,27 @@ export function buildRouting(graph) {
     return last;
   }
 
-  return { nextEdge, tables, exits, pickExit };
+  return {
+    /** Compute up to `k` more exit tables. Returns true when complete. */
+    build(k) {
+      const end = Math.min(exitCursor + k, exits.length);
+      for (; exitCursor < end; exitCursor++) {
+        const ex = exits[exitCursor];
+        const t = dijkstraFrom(ex.edgeId);
+        tables.set(ex.edgeId, t);
+        nextEdge.set(ex.edgeId, t.next);
+      }
+      return exitCursor >= exits.length;
+    },
+    /** Routing object (only valid once build() returned true). */
+    finish() {
+      return { nextEdge, tables, exits, pickExit };
+    },
+  };
+}
+
+export function buildRouting(graph, closedSet = null) {
+  const b = createRoutingBuilder(graph, closedSet);
+  b.build(Infinity);
+  return b.finish();
 }

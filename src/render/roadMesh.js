@@ -2,6 +2,9 @@
 // Few draw calls: one merged mesh for ribbons, one for discs, one for markings.
 // F3: per-edge congestion heatmap on the ribbon mesh via a dynamic vertex
 // color attribute (see setHeatmap/updateHeatmap on the returned object).
+// V3 C1 (D3): closures paint hazard stripes through ONE unified repaint();
+// obras-mode picking raycasts `ribbonMesh` and maps hit vertices back to
+// edges via edgeForVertex(). V3 C2: setWetness(k) darkens the asphalt tint.
 
 import * as THREE from 'three';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
@@ -16,6 +19,17 @@ const HEAT_GREEN = { r: 0.13, g: 0.78, b: 0.25 };
 const HEAT_YELLOW = { r: 1.0, g: 0.84, b: 0.1 };
 const HEAT_RED = { r: 0.88, g: 0.1, b: 0.1 };
 const _rgb = { r: 0, g: 0, b: 0 };
+
+// ---- V3 C1 closures (D3): hazard stripe colors painted on closed ranges ----
+// Raw vertex-color components (material is white whenever closures exist, so
+// these show pure — like the heat ramp anchors above).
+const HAZARD_A = { r: 1.0, g: 0.42, b: 0.04 }; // obras orange
+const HAZARD_B = { r: 0.92, g: 0.92, b: 0.92 }; // pale band
+// Asphalt repaint + material tint scratch. THREE.Color.setHex applies the
+// same sRGB->linear conversion as material.color.setHex, so per-vertex
+// asphalt x WHITE material === legacy white vertices x asphalt material.
+const _asphalt = new THREE.Color();
+const _matColor = new THREE.Color();
 
 /**
  * Piecewise-linear speed-ratio ramp into `out`:
@@ -248,6 +262,7 @@ export function buildRoadMesh(network) {
 
   const meshes = [];
   let ribbonColorAttr = null; // F3: merged ribbons' per-vertex color
+  let ribbonMesh = null; // C1: exposed for obras-mode picking (raycast target)
   if (ribbonGeoms.length) {
     const g = BufferGeometryUtils.mergeGeometries(ribbonGeoms);
     ribbonGeoms.forEach((x) => x.dispose());
@@ -260,6 +275,7 @@ export function buildRoadMesh(network) {
     m.receiveShadow = true;
     group.add(m);
     meshes.push(m);
+    ribbonMesh = m;
   }
   if (discGeoms.length) {
     const g = BufferGeometryUtils.mergeGeometries(discGeoms);
@@ -279,13 +295,104 @@ export function buildRoadMesh(network) {
     meshes.push(m);
   }
 
-  // ---- F3 congestion heatmap API ----
+  // ---- F3 heatmap + C1 closures: ONE unified repaint path (D3) ----
   let heatmapOn = false;
+  let closedCount = 0; // closed ranges last counted by repaint()
+  let wetness = 0; // C2 rain darkening (0..1) — applied via setWetness
+
+  const isClosed = (rg) => rg.edge._closed === true || (rg.twin !== null && rg.twin._closed === true);
+
+  /**
+   * Material tint (D3 invariant): WHITE whenever vertex colors carry the look
+   * (heatmap on OR any closure striped), asphalt otherwise — both x wetness
+   * (C2: base x lerp(1, asphaltDarken, k)). Wetness 0 keeps the exact legacy
+   * setHex(roadColor) path (test-7 contract). Junction discs stay asphalt
+   * always (no vertex colors), only darkened by rain.
+   */
+  function applyMaterialColor() {
+    const k = wetness > 0 ? 1 + ((CONFIG.weather?.rain?.asphaltDarken ?? 0.55) - 1) * wetness : 1;
+    _matColor.setHex(heatmapOn || closedCount > 0 ? 0xffffff : R.roadColor);
+    if (k !== 1) _matColor.multiplyScalar(k);
+    roadMat.color.copy(_matColor);
+    _matColor.setHex(R.roadColor);
+    if (k !== 1) _matColor.multiplyScalar(k);
+    discMat.color.copy(_matColor);
+  }
+
+  /** Hazard stripes on a closed range: two colors alternating every
+   *  CONFIG.closures.stripePeriodRows ribbon vertex rows (row = 2 verts). */
+  function paintStripes(arr, rg, periodRows) {
+    const end = rg.vertStart + rg.vertCount;
+    for (let v = rg.vertStart; v < end; v++) {
+      const row = (v - rg.vertStart) >> 1;
+      const c = Math.floor(row / periodRows) % 2 === 0 ? HAZARD_A : HAZARD_B;
+      const p = v * 3;
+      arr[p] = c.r;
+      arr[p + 1] = c.g;
+      arr[p + 2] = c.b;
+    }
+  }
+
+  /**
+   * Unified repaint (D3): writes EVERY range — closed => hazard stripes,
+   * else heatmap-on => congestion ramp, else asphalt RGB per-vertex (the
+   * material is white whenever any range needs pure vertex colors). With
+   * heatmap off AND zero closures it takes the exact legacy path
+   * (fill(1) + roadColor material) so e2e test 7's all-white assertion
+   * stays byte-identical. Event-driven (toggle/closure change) — not hot.
+   */
+  function repaint() {
+    if (!ribbonColorAttr) return;
+    closedCount = 0;
+    for (let i = 0; i < heatmapRanges.length; i++) {
+      if (isClosed(heatmapRanges[i])) closedCount++;
+    }
+    applyMaterialColor();
+    const arr = ribbonColorAttr.array;
+    if (!heatmapOn && closedCount === 0) {
+      arr.fill(1); // legacy exact path (test-7 contract)
+      ribbonColorAttr.needsUpdate = true;
+      return;
+    }
+    const hm = CONFIG.heatmap;
+    const greenT = hm?.greenRatio ?? 0.8;
+    const yellowT = hm?.yellowRatio ?? 0.45;
+    const redT = hm?.redRatio ?? 0.2;
+    const periodRows = CONFIG.closures?.stripePeriodRows ?? 2;
+    _asphalt.setHex(R.roadColor); // same conversion as material.setHex
+    for (let i = 0; i < heatmapRanges.length; i++) {
+      const rg = heatmapRanges[i];
+      if (isClosed(rg)) {
+        paintStripes(arr, rg, periodRows);
+        continue;
+      }
+      if (heatmapOn) {
+        let ratio = rg.edge._speedRatio ?? 1;
+        if (rg.twin) {
+          const tr = rg.twin._speedRatio ?? 1;
+          if (tr < ratio) ratio = tr;
+        }
+        heatRamp(ratio, greenT, yellowT, redT, _rgb);
+      } else {
+        _rgb.r = _asphalt.r;
+        _rgb.g = _asphalt.g;
+        _rgb.b = _asphalt.b;
+      }
+      const end = (rg.vertStart + rg.vertCount) * 3;
+      for (let p = rg.vertStart * 3; p < end; p += 3) {
+        arr[p] = _rgb.r;
+        arr[p + 1] = _rgb.g;
+        arr[p + 2] = _rgb.b;
+      }
+    }
+    ribbonColorAttr.needsUpdate = true;
+  }
 
   /**
    * Repaint ribbon vertex colors from each edge pair's speed-ratio EWMA
    * (worst direction wins). Writes straight into the attribute array via
    * module scratch — zero alloc. No-op while disabled. Call ~1 Hz wall-clock.
+   * C1: closed ranges keep their hazard stripes (skipped here).
    * CONFIG.heatmap may be absent until integration -> ?? defaults.
    */
   function updateHeatmap() {
@@ -297,6 +404,7 @@ export function buildRoadMesh(network) {
     const arr = ribbonColorAttr.array;
     for (let i = 0; i < heatmapRanges.length; i++) {
       const rg = heatmapRanges[i];
+      if (closedCount > 0 && isClosed(rg)) continue; // C1: stripes survive
       // Worst direction of the undirected pair (detectors.js owns _speedRatio;
       // ?? 1 only guards the pre-detector instant of a world build).
       let ratio = rg.edge._speedRatio ?? 1;
@@ -315,24 +423,43 @@ export function buildRoadMesh(network) {
     ribbonColorAttr.needsUpdate = true;
   }
 
-  /**
-   * Toggle the heatmap. ON: material goes white so vertex colors show pure,
-   * painted immediately. OFF: restore asphalt material color + refill the
-   * attribute white once (white x roadColor = exact original look).
-   */
+  /** Toggle the heatmap — one repaint; closures survive toggles (D3). */
   function setHeatmap(enabled) {
     enabled = !!enabled;
     if (enabled === heatmapOn) return;
     heatmapOn = enabled;
-    if (!ribbonColorAttr) return;
-    if (enabled) {
-      roadMat.color.setHex(0xffffff);
-      updateHeatmap();
-    } else {
-      roadMat.color.setHex(R.roadColor);
-      ribbonColorAttr.array.fill(1);
-      ribbonColorAttr.needsUpdate = true;
+    repaint();
+  }
+
+  /** C1: call after closeEdge/openEdge/clearIncidents so stripes follow. */
+  function notifyClosuresChanged() {
+    repaint();
+  }
+
+  /**
+   * C2 rain hook (D3): k in 0..1 darkens the road material toward
+   * asphaltDarken. Pure re-tint — vertex colors untouched.
+   */
+  function setWetness(k) {
+    wetness = Math.min(Math.max(k || 0, 0), 1);
+    applyMaterialColor();
+  }
+
+  /**
+   * C1 picking: merged-ribbon vertex index -> heatmap range ({edge, twin, ...})
+   * via binary search on vertStart. Returns null past the last range.
+   */
+  function edgeForVertex(vIdx) {
+    if (!heatmapRanges.length || vIdx < 0) return null;
+    let lo = 0;
+    let hi = heatmapRanges.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (heatmapRanges[mid].vertStart <= vIdx) lo = mid;
+      else hi = mid - 1;
     }
+    const rg = heatmapRanges[lo];
+    return vIdx < rg.vertStart + rg.vertCount ? rg : null;
   }
 
   /**
@@ -354,6 +481,13 @@ export function buildRoadMesh(network) {
     setHeatmap,
     updateHeatmap,
     getHeatmapState,
+    // ---- V3 C1 closures + picking / C2 rain ----
+    notifyClosuresChanged,
+    edgeForVertex,
+    setWetness,
+    get ribbonMesh() {
+      return ribbonMesh;
+    },
     dispose() {
       for (const m of meshes) m.geometry.dispose();
       roadMat.dispose();

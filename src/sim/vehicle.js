@@ -79,6 +79,7 @@ export function createVehicle(rng, lane, type) {
     prevSeg: lane, // state at the START of the current step (render interpolation §2.1)
     prevS: 0,
     _gone: false, // set on despawn (lets the follow camera detach)
+    isPhantom: false, // V3 C1 incidents: stopped fake vehicle, lives ONLY in lane.vehicles
     v: 0,
     nextConn: null, // cached next connector for the current real lane
     exitEdgeId: null, // routed exit (null in onNetwork mode)

@@ -10,6 +10,12 @@ const port = Number(process.env.SIM_PORT || 5173);
 export default defineConfig({
   testDir: './tests',
   timeout: 60_000,
+  // V3: three spec files (e2e, v3-c1, v3-c2) of heavyweight WebGL sims at 4x
+  // would otherwise run as parallel SwiftShader pages and starve each other
+  // into waitForFunction timeouts (observed: rotating flakes, never assertion
+  // failures; e2e-2 needs ~20 wall-s alone vs >30 s under any parallel load).
+  // Serial = the Phase 0 baseline that ran 8/8 green in 3.1 m.
+  workers: 1,
   use: {
     baseURL: `http://localhost:${port}`,
     headless: true,

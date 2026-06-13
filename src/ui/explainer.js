@@ -89,6 +89,29 @@ const SECTIONS = [
       'desplazan en diagonal hacia atrás</b>: son las ondas de choque ' +
       'viajando contracorriente.',
   },
+  // --- C1 --- (V3)
+  {
+    title: 'Obras e incidentes',
+    html:
+      'Activa <b>Modo obras</b> y haz clic sobre una calle para cerrarla ' +
+      '(ambos sentidos): los vehículos adentro salen y <b>recalculan su ' +
+      'ruta</b>, nadie nuevo entra, los conos marcan el cierre. ' +
+      '<b>Provocar incidente</b> detiene un vehículo 90 s en un solo ' +
+      'carril: cola por IDM detrás y, si hay otro carril, MOBIL genera el ' +
+      'adelantamiento — míralo con el mapa de calor.',
+  },
+  // --- end C1 ---
+  // --- C2 --- (V3)
+  {
+    title: 'Clima y ciclo día/noche',
+    html:
+      'Con <b>lluvia</b> todos bajan su velocidad deseada (×0.8), amplían ' +
+      'el hueco (+0.4 s) y frenan más suave: la capacidad cae sin tocar la ' +
+      'demanda. La <b>hora del día</b> mueve el sol, enciende faros, ' +
+      'farolas y ventanas. Experimento: misma demanda 12:00 despejado vs ' +
+      '22:00 lluvia — mira el diagrama fundamental.',
+  },
+  // --- end C2 ---
   {
     title: 'Experimentos sugeridos',
     html:
@@ -103,6 +126,10 @@ const SECTIONS = [
       'carril significan más flujo?</li>' +
       '<li>Busca otra ciudad (por ejemplo «Sopocachi, La Paz») y compara su ' +
       'red.</li>' +
+      '<li>Cierra la avenida principal con <b>Modo obras</b> y mira el ' +
+      're-ruteo en el mapa de calor.</li>' + // V3 C1
+      '<li>Activa <b>lluvia</b> con demanda alta y compárala con un día ' +
+      'despejado en el diagrama fundamental.</li>' + // V3 C2
       '</ul>',
   },
 ];
