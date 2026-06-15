@@ -37,6 +37,12 @@ export function createGui(app) {
     horaDelDia: CONFIG.dayNight.timeOfDay,
     cicloAutomatico: !!CONFIG.dayNight.auto,
     // --- end C2 ---
+    // --- D1 --- «Vista satélite» checkbox state (OFF = stylized low-poly).
+    verSatelite: !!CONFIG.view.satellite,
+    // --- end D1 ---
+    // --- D2 --- «Teleférico» checkbox state (renders only if lines exist).
+    verTeleferico: CONFIG.aerialway.enabled !== false,
+    // --- end D2 ---
   };
 
   const retime = () =>
@@ -185,7 +191,50 @@ export function createGui(app) {
     .add(params, 'nombresCalles')
     .name('Nombres de calles')
     .onChange((v) => app.world.streetNames.setVisible(v));
+  // --- D1 --- «Vista satélite» (?.-guarded no-op until D1 wires __SIM__/setter;
+  // agent D1 fills ONLY inside this block — drape imagery + building transparency).
+  fView
+    .add(params, 'verSatelite')
+    .name('Vista satélite')
+    .onChange((v) => window.__SIM__?.setSatellite?.(v));
+  // --- end D1 ---
+  // --- D2 --- «Teleférico» (?.-guarded no-op until D2 wires group visibility;
+  // agent D2 fills ONLY inside this block — toggle aerialwayMesh.group.visible).
+  fView
+    .add(params, 'verTeleferico')
+    .name('Teleférico')
+    .onChange((v) => app.world?.aerialwayMesh?.setVisible?.(v));
+  // --- end D2 ---
   fView.close();
+
+  // --- D3 --- «Escenario» (Compartir enlace + Modo tour). Buttons are
+  // ?.-guarded no-ops until D3 wires app.share / app.tour; agent D3 fills ONLY
+  // inside this block (placeholder folder so the layout slot exists now).
+  const fEscenario = gui.addFolder('Escenario');
+  fEscenario
+    .add(
+      {
+        compartir() {
+          // D3: window.__SIM__.share.copy() -> copies enlace + toast.
+          window.__SIM__?.share?.copy?.();
+        },
+      },
+      'compartir'
+    )
+    .name('Compartir enlace 🔗');
+  fEscenario
+    .add(
+      {
+        tour() {
+          // D3: app.tour.play() -> opens #tour panel + starts the guided tour.
+          app.tour?.play?.();
+        },
+      },
+      'tour'
+    )
+    .name('Modo tour ▶');
+  fEscenario.close();
+  // --- end D3 ---
 
   return {
     gui,
@@ -203,7 +252,32 @@ export function createGui(app) {
       // --- C2 --- re-apply weather/hour/wetness/lamps to the fresh world.
       app.environment?.applyTo?.(world);
       // --- end C2 ---
+      // --- D1 --- carry the «Vista satélite» toggle across world swaps. The
+      // imagery itself loads fire-and-forget in makeWorld/rebuildWorld and gates
+      // application on this param; this line re-asserts the intent on swap.
+      // Agent D1 fills (e.g. window.__SIM__?.setSatellite?.(params.verSatelite),
+      // or a direct world.terrain.setSatellite gated on world.satellite ready).
+      if (params.verSatelite) window.__SIM__?.setSatellite?.(true);
+      // --- end D1 ---
+      // --- D2 --- carry the «Teleférico» visibility across world swaps.
+      world.aerialwayMesh?.setVisible?.(params.verTeleferico);
+      // --- end D2 ---
     },
+    // --- D3 --- mirror restored/tour state into params + redraw the controllers.
+    // share.applyFromUrl and tour.applyState call this AFTER driving the live
+    // setters, so this only updates `params` + the lil-gui display (NOT the
+    // setters again — avoids double-apply). Keys match `params` field names;
+    // controllers are looked up by their bound property via controllersRecursive.
+    applyState(patch) {
+      if (!patch) return;
+      for (const key in patch) {
+        if (key in params) params[key] = patch[key];
+      }
+      for (const ctrl of gui.controllersRecursive()) {
+        if (ctrl.property in patch) ctrl.updateDisplay();
+      }
+    },
+    // --- end D3 ---
     dispose() {
       gui.destroy();
     },

@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 import { cumulativeLengths, pointAtParam } from '../util/math2d.js';
 import { profileAt } from '../network/elevation.js';
+import { buildTerrainUVs } from './satellite.js'; // D1
 
 export function createTerrainMesh(network) {
   const cfg = CONFIG.elevation;
@@ -133,8 +134,39 @@ export function createTerrainMesh(network) {
   mesh.receiveShadow = true;
   mesh.matrixAutoUpdate = false;
 
+  // --- D1 --- the terrain plane rect in local meters (bbox + 35% margin), so
+  // satellite.js can compute the tile cover over the SAME extent the UVs map to.
+  const planeRect = {
+    minX,
+    maxX: minX + width,
+    minZ,
+    maxZ: minZ + depth,
+  };
+  // --- end D1 ---
+
   return {
     mesh,
+    // --- D1 --- the terrain plane extent (bbox + margin) for tile-cover math.
+    planeRect,
+    /**
+     * Drape Esri imagery on the displaced terrain, or remove it.
+     *   sat present -> per-vertex Mercator UVs + mat.map=texture, color=white
+     *                  (photo true colors; Lambert still composites sun/fog/night).
+     *   sat null    -> mat.map=null, color back to the stylized groundColor.
+     */
+    setSatellite(sat) {
+      if (sat && sat.texture) {
+        buildTerrainUVs(geom, network, sat.geoBounds);
+        mat.map = sat.texture;
+        mat.color.setHex(0xffffff);
+      } else {
+        if (geom.attributes.uv) geom.deleteAttribute('uv');
+        mat.map = null;
+        mat.color.setHex(CONFIG.render.groundColor);
+      }
+      mat.needsUpdate = true;
+    },
+    // --- end D1 ---
     dispose() {
       geom.dispose();
       mat.dispose();

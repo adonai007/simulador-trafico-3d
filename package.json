@@ -8,13 +8,16 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "playwright test"
+    "test": "playwright test",
+    "fetch:aerialway": "node scripts/fetch-default-aerialway.mjs",
+    "fetch:satellite": "node scripts/fetch-default-satellite.mjs"
   },
   "dependencies": {
     "lil-gui": "^0.21.0",
     "three": "^0.184.0"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^1.0.0",
     "@playwright/test": "^1.60.0",
     "vite": "^8.0.16"
   }

@@ -40,6 +40,40 @@ export function buildBuildingQuery(lat, lon, radiusM) {
   );
 }
 
+// ---- D2: Teleférico Mi Teleférico ------------------------------------------
+/**
+ * Aerialway ways + nodes (cable cars / gondolas — Mi Teleférico). Mirrors the
+ * highway/building transport: `around` radius, recursed nodes WITH tags so the
+ * cable-line polylines, station nodes and tower (pylon) nodes all come back.
+ * Standalone aerialway-tagged nodes (stations/pylons mapped off the way) are
+ * unioned in case they aren't way members. Produced the bundled raw Overpass
+ * snapshot public/data/default-aerialway.json.
+ */
+export function buildAerialwayQuery(lat, lon, radiusM) {
+  const r = Math.round(radiusM);
+  return (
+    `[out:json][timeout:30];` +
+    `(` +
+    `way(around:${r},${lat},${lon})["aerialway"];` +
+    `node(around:${r},${lat},${lon})["aerialway"];` +
+    `);` +
+    `(._;>;);out body;`
+  );
+}
+
+/**
+ * Fetch aerialway data around a point (same mirror fallback as the road query).
+ * Radius clamp is intentionally WIDER than the road clamp — La Paz teleférico
+ * lines span kilometers, so a small disc clips every line. The caller treats
+ * failure/empty as "no teleférico" (graceful, like buildings): resolves to the
+ * raw Overpass JSON, or throws (OFFLINE) which the caller swallows.
+ */
+export async function fetchAerialwayOsm(lat, lon, radiusM) {
+  const r = Math.max(250, Math.round(radiusM ?? CONFIG.defaultRadiusM));
+  return fetchWithFallback(buildAerialwayQuery(lat, lon, r));
+}
+// ---- end D2 ----
+
 function typedError(code, message) {
   const err = new Error(message);
   err.code = code;

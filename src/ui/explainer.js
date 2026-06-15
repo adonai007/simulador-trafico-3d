@@ -112,6 +112,42 @@ const SECTIONS = [
       '22:00 lluvia — mira el diagrama fundamental.',
   },
   // --- end C2 ---
+  // --- D1 --- (V4) Vista satélite
+  {
+    title: 'Vista satélite',
+    html:
+      'Activa <b>Vista satélite</b> (carpeta Vista) para proyectar una ' +
+      '<b>imagen aérea real</b> (Esri World Imagery) sobre el terreno con ' +
+      'relieve: la foto sigue las laderas igual que el modelo de bajo ' +
+      'poligonaje. Los <b>edificios se vuelven semitransparentes</b> para que ' +
+      'se vea su volumen sin tapar la fotografía. Desactívala para volver a la ' +
+      'vista estilizada. Compara una avenida en ambos modos.',
+  },
+  // --- end D1 ---
+  // --- D2 --- (V4) Teleférico Mi Teleférico
+  {
+    title: 'Teleférico Mi Teleférico',
+    html:
+      'Las líneas reales del <b>Mi Teleférico</b> (datos de OpenStreetMap) se ' +
+      'dibujan por <b>color</b> — Roja, Amarilla, Verde, Azul, Naranja… — como ' +
+      'cables elevados que siguen el relieve del terreno, sostenidos por ' +
+      'torres. Sobre cada cable circulan <b>cabinas animadas</b> en ambos ' +
+      'sentidos, parte de la identidad paceña. Actívalo o desactívalo con la ' +
+      'casilla <b>«Teleférico»</b> en la carpeta Vista.',
+  },
+  // --- end D2 ---
+  // --- D3 --- (V4)
+  {
+    title: 'Compartir y modo tour',
+    html:
+      '<b>Compartir enlace</b> copia una URL que reproduce el escenario ' +
+      'exacto: zona, demanda, clima, hora, mapa de calor, capas activas y ' +
+      'hasta los cierres de calle. Quien la abra ve la misma simulación. El ' +
+      '<b>Modo tour</b> recorre escenas didácticas — <i>mañana tranquila → ' +
+      'hora pico → cierre de avenida → llega la lluvia → anochece</i> — con ' +
+      'avance automático o manual (Siguiente).',
+  },
+  // --- end D3 ---
   {
     title: 'Experimentos sugeridos',
     html:
@@ -130,6 +166,10 @@ const SECTIONS = [
       're-ruteo en el mapa de calor.</li>' + // V3 C1
       '<li>Activa <b>lluvia</b> con demanda alta y compárala con un día ' +
       'despejado en el diagrama fundamental.</li>' + // V3 C2
+      '<li>Activa <b>Vista satélite</b> y compárala con la vista estilizada ' +
+      'de bajo poligonaje.</li>' + // V4 D3
+      '<li>Comparte un escenario de <b>hora pico con lluvia</b> y reábrelo ' +
+      'desde el enlace.</li>' + // V4 D3
       '</ul>',
   },
 ];

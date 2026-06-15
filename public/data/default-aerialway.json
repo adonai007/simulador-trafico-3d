@@ -1,0 +1,1942 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-06-13T13:16:35Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "node",
+  "id": 2038568215,
+  "lat": -16.5004242,
+  "lon": -68.1352021
+},
+{
+  "type": "node",
+  "id": 2038568217,
+  "lat": -16.5000575,
+  "lon": -68.1349514
+},
+{
+  "type": "node",
+  "id": 2038568220,
+  "lat": -16.5001464,
+  "lon": -68.1355357
+},
+{
+  "type": "node",
+  "id": 2038568221,
+  "lat": -16.5004317,
+  "lon": -68.1352505
+},
+{
+  "type": "node",
+  "id": 3088906660,
+  "lat": -16.5182222,
+  "lon": -68.1498873,
+  "tags": {
+    "aerialway": "yes",
+    "level": "1",
+    "name": "Ciudad Satélite / Qhana Pata",
+    "name:ay": "Qhana Pata",
+    "name:es": "Ciudad Satélite",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 3088943774,
+  "lat": -16.5154431,
+  "lon": -68.1440911,
+  "tags": {
+    "aerialway": "yes",
+    "name": "Buenos Aires / Quta Uma",
+    "name:ay": "Quta Uma",
+    "name:es": "Buenos Aires",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 3088943780,
+  "lat": -16.5146566,
+  "lon": -68.1302667,
+  "tags": {
+    "aerialway": "yes",
+    "name": "Sopocachi / Supu Kachi",
+    "name:ay": "Supu Kachi",
+    "name:es": "Sopocachi",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 3984125983,
+  "lat": -16.5174283,
+  "lon": -68.1215318
+},
+{
+  "type": "node",
+  "id": 4386585634,
+  "lat": -16.5006982,
+  "lon": -68.1325759
+},
+{
+  "type": "node",
+  "id": 4795800948,
+  "lat": -16.5189357,
+  "lon": -68.1166270,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 4900724035,
+  "lat": -16.5176214,
+  "lon": -68.1485429,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 4900724036,
+  "lat": -16.5164396,
+  "lon": -68.1461365,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 4900724037,
+  "lat": -16.5157573,
+  "lon": -68.1447401,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 4900724038,
+  "lat": -16.5154218,
+  "lon": -68.1437609,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5130973514,
+  "lat": -16.4851583,
+  "lon": -68.1217784,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5130977708,
+  "lat": -16.5040020,
+  "lon": -68.1209754
+},
+{
+  "type": "node",
+  "id": 5130977709,
+  "lat": -16.5039910,
+  "lon": -68.1207200
+},
+{
+  "type": "node",
+  "id": 5130977710,
+  "lat": -16.5042377,
+  "lon": -68.1207861
+},
+{
+  "type": "node",
+  "id": 5130977711,
+  "lat": -16.5042347,
+  "lon": -68.1209289
+},
+{
+  "type": "node",
+  "id": 5149990589,
+  "lat": -16.5173653,
+  "lon": -68.1215911,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5150016902,
+  "lat": -16.5162974,
+  "lon": -68.1250627,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5150016903,
+  "lat": -16.5152659,
+  "lon": -68.1283844,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5150016904,
+  "lat": -16.5148926,
+  "lon": -68.1341730,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5159663317,
+  "lat": -16.5004063,
+  "lon": -68.1326152
+},
+{
+  "type": "node",
+  "id": 5159663318,
+  "lat": -16.5005285,
+  "lon": -68.1322501
+},
+{
+  "type": "node",
+  "id": 5159663821,
+  "lat": -16.5004926,
+  "lon": -68.1324313
+},
+{
+  "type": "node",
+  "id": 5312958285,
+  "lat": -16.4846913,
+  "lon": -68.1218263,
+  "tags": {
+    "aerialway": "yes",
+    "layer": "-1",
+    "name": "Villarroel / Inalmama",
+    "name:ay": "Inalmama",
+    "name:es": "Villarroel",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958286,
+  "lat": -16.4852907,
+  "lon": -68.1217722,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958287,
+  "lat": -16.4848725,
+  "lon": -68.1217922,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958288,
+  "lat": -16.4848145,
+  "lon": -68.1217940,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958289,
+  "lat": -16.4864874,
+  "lon": -68.1217127,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958290,
+  "lat": -16.4882105,
+  "lon": -68.1216340,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958291,
+  "lat": -16.4901142,
+  "lon": -68.1215531,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958292,
+  "lat": -16.4918113,
+  "lon": -68.1214784,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958293,
+  "lat": -16.4928998,
+  "lon": -68.1214085,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958294,
+  "lat": -16.4934413,
+  "lon": -68.1213777,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958308,
+  "lat": -16.4936829,
+  "lon": -68.1213664,
+  "tags": {
+    "aerialway": "yes",
+    "name": "Busch / Quirwa Uma",
+    "name:ay": "Quirwa Uma",
+    "name:es": "Busch",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958309,
+  "lat": -16.4940969,
+  "lon": -68.1213432,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958310,
+  "lat": -16.4949627,
+  "lon": -68.1213012,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958311,
+  "lat": -16.4983706,
+  "lon": -68.1211304,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958312,
+  "lat": -16.4999937,
+  "lon": -68.1210525,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958313,
+  "lat": -16.5017140,
+  "lon": -68.1209703,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958314,
+  "lat": -16.5033185,
+  "lon": -68.1208918,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958315,
+  "lat": -16.5037713,
+  "lon": -68.1208700,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958316,
+  "lat": -16.5041008,
+  "lon": -68.1208521,
+  "tags": {
+    "aerialway": "yes",
+    "name": "Plaza Triangular / Kimsachata",
+    "name:ay": "Kimsachata",
+    "name:es": "Plaza Triangular",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958317,
+  "lat": -16.5043903,
+  "lon": -68.1208627,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958318,
+  "lat": -16.5049881,
+  "lon": -68.1208870,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958319,
+  "lat": -16.5055790,
+  "lon": -68.1209120,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5312958320,
+  "lat": -16.5108226,
+  "lon": -68.1211058,
+  "tags": {
+    "aerialway": "yes",
+    "name": "San Jorge / Jalsuri",
+    "name:ay": "Jalsuri",
+    "name:es": "San Jorge",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 5313014430,
+  "lat": -16.5112035,
+  "lon": -68.1202948,
+  "tags": {
+    "aerialway": "yes",
+    "name": "San Jorge / Jalsuri",
+    "name:ay": "Jalsuri",
+    "name:es": "San Jorge",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 5313014433,
+  "lat": -16.5121791,
+  "lon": -68.1535252,
+  "tags": {
+    "aerialway": "yes",
+    "name": "Faro Murillo",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 5336307794,
+  "lat": -16.5190235,
+  "lon": -68.1163520,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5462285807,
+  "lat": -16.5004242,
+  "lon": -68.1327225,
+  "tags": {
+    "aerialway": "yes",
+    "name": "Estación Prado - Chukiya Marka",
+    "name:ay": "Chukiya Marka",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position",
+    "wheelchair": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 5462285810,
+  "lat": -16.5185279,
+  "lon": -68.1162404,
+  "tags": {
+    "aerialway": "yes",
+    "name": "Libertador / Chuqi Apu",
+    "name:ay": "Chuqi Apu",
+    "name:es": "Libertador",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 5493660653,
+  "lat": -16.5007236,
+  "lon": -68.1323302
+},
+{
+  "type": "node",
+  "id": 5493660654,
+  "lat": -16.5008378,
+  "lon": -68.1327474
+},
+{
+  "type": "node",
+  "id": 5656816017,
+  "lat": -16.5041419,
+  "lon": -68.1260507,
+  "tags": {
+    "aerialway": "yes",
+    "name": "Teatro al Aire Libre / Layqa Quta",
+    "name:ay": "Layqa Quta",
+    "name:es": "Teatro al Aire Libre",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 5656816018,
+  "lat": -16.5000243,
+  "lon": -68.1351531,
+  "tags": {
+    "aerialway": "yes",
+    "name": "Estación San José - Utjäwi",
+    "name:ay": "Utjäwi",
+    "name:es": "San José",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position",
+    "wheelchair": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 5742371776,
+  "lat": -16.5095240,
+  "lon": -68.1216485,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5893891212,
+  "lat": -16.4998371,
+  "lon": -68.1350767
+},
+{
+  "type": "node",
+  "id": 5893891214,
+  "lat": -16.4999959,
+  "lon": -68.1353111
+},
+{
+  "type": "node",
+  "id": 5899539178,
+  "lat": -16.5148088,
+  "lon": -68.1328242,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5899539179,
+  "lat": -16.5149881,
+  "lon": -68.1360021,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5899539180,
+  "lat": -16.5150990,
+  "lon": -68.1380761,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5899539181,
+  "lat": -16.5152040,
+  "lon": -68.1397295,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5899539182,
+  "lat": -16.5152612,
+  "lon": -68.1406837,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5910304042,
+  "lat": -16.5149557,
+  "lon": -68.1293868,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5911962399,
+  "lat": -16.5146808,
+  "lon": -68.1305310,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5911962400,
+  "lat": -16.5146853,
+  "lon": -68.1306383,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 5911962401,
+  "lat": -16.5145007,
+  "lon": -68.1308941
+},
+{
+  "type": "node",
+  "id": 5911962402,
+  "lat": -16.5146349,
+  "lon": -68.1308241
+},
+{
+  "type": "node",
+  "id": 5911962403,
+  "lat": -16.5148658,
+  "lon": -68.1307519
+},
+{
+  "type": "node",
+  "id": 5911962404,
+  "lat": -16.5147627,
+  "lon": -68.1301456
+},
+{
+  "type": "node",
+  "id": 5911962405,
+  "lat": -16.5145314,
+  "lon": -68.1300705
+},
+{
+  "type": "node",
+  "id": 5911962406,
+  "lat": -16.5145116,
+  "lon": -68.1303503
+},
+{
+  "type": "node",
+  "id": 5911962407,
+  "lat": -16.5142134,
+  "lon": -68.1303193
+},
+{
+  "type": "node",
+  "id": 5911962408,
+  "lat": -16.5142056,
+  "lon": -68.1305440
+},
+{
+  "type": "node",
+  "id": 5911962409,
+  "lat": -16.5143289,
+  "lon": -68.1307639
+},
+{
+  "type": "node",
+  "id": 5911962410,
+  "lat": -16.5144289,
+  "lon": -68.1308257
+},
+{
+  "type": "node",
+  "id": 5911962411,
+  "lat": -16.5147790,
+  "lon": -68.1301673
+},
+{
+  "type": "node",
+  "id": 5911962412,
+  "lat": -16.5142564,
+  "lon": -68.1307085
+},
+{
+  "type": "node",
+  "id": 5911962413,
+  "lat": -16.5147301,
+  "lon": -68.1301349
+},
+{
+  "type": "node",
+  "id": 5911962454,
+  "lat": -16.5142861,
+  "lon": -68.1307312
+},
+{
+  "type": "node",
+  "id": 6056029810,
+  "lat": -16.4999161,
+  "lon": -68.1350211
+},
+{
+  "type": "node",
+  "id": 6056029822,
+  "lat": -16.5003420,
+  "lon": -68.1351454,
+  "tags": {
+    "check_date": "2024-02-11",
+    "entrance": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 6093970126,
+  "lat": -16.5182861,
+  "lon": -68.1163863,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6093970127,
+  "lat": -16.5182327,
+  "lon": -68.1164152,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6093970128,
+  "lat": -16.5180169,
+  "lon": -68.1165073,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6100304005,
+  "lat": -16.5176518,
+  "lon": -68.1207681,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6100304006,
+  "lat": -16.5183640,
+  "lon": -68.1183447,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6100304007,
+  "lat": -16.5168502,
+  "lon": -68.1232553,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6119442448,
+  "lat": -16.5005270,
+  "lon": -68.1329426
+},
+{
+  "type": "node",
+  "id": 6348400708,
+  "lat": -16.5106956,
+  "lon": -68.1509390,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6348400709,
+  "lat": -16.5096607,
+  "lon": -68.1494204,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6406873959,
+  "lat": -16.5007073,
+  "lon": -68.1323245,
+  "tags": {
+    "access": "permissive",
+    "check_date": "2024-02-11",
+    "entrance": "main"
+  }
+},
+{
+  "type": "node",
+  "id": 6577720218,
+  "lat": -16.5105406,
+  "lon": -68.1210885,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6577720251,
+  "lat": -16.5114454,
+  "lon": -68.1201660,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6577745685,
+  "lat": -16.5040519,
+  "lon": -68.1262152,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6577745686,
+  "lat": -16.5043197,
+  "lon": -68.1258927,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6577745687,
+  "lat": -16.5039845,
+  "lon": -68.1263331,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6648434392,
+  "lat": -16.5147410,
+  "lon": -68.1312393,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6648434406,
+  "lat": -16.5157979,
+  "lon": -68.1266469,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6648434407,
+  "lat": -16.5190807,
+  "lon": -68.1161684,
+  "tags": {
+    "aerialway": "yes",
+    "name": "Libertador / Chuqi Apu",
+    "name:ay": "Chuqi Apu",
+    "name:es": "Libertador",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "stop_position"
+  }
+},
+{
+  "type": "node",
+  "id": 6708488029,
+  "lat": -16.5005795,
+  "lon": -68.1328589
+},
+{
+  "type": "node",
+  "id": 6708488094,
+  "lat": -16.5012399,
+  "lon": -68.1311983,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 6708488101,
+  "lat": -16.5003082,
+  "lon": -68.1327711
+},
+{
+  "type": "node",
+  "id": 6708488102,
+  "lat": -16.5004666,
+  "lon": -68.1328444
+},
+{
+  "type": "node",
+  "id": 6708488103,
+  "lat": -16.5004585,
+  "lon": -68.1328981
+},
+{
+  "type": "node",
+  "id": 6708488106,
+  "lat": -16.5007420,
+  "lon": -68.1327132
+},
+{
+  "type": "node",
+  "id": 6708488109,
+  "lat": -16.5003956,
+  "lon": -68.1326123
+},
+{
+  "type": "node",
+  "id": 6760957714,
+  "lat": -16.5006326,
+  "lon": -68.1324940
+},
+{
+  "type": "node",
+  "id": 6760957715,
+  "lat": -16.5007831,
+  "lon": -68.1323714
+},
+{
+  "type": "node",
+  "id": 7902213769,
+  "lat": -16.5119197,
+  "lon": -68.1531462,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 8573395111,
+  "lat": -16.5037836,
+  "lon": -68.1266893,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 8573395112,
+  "lat": -16.5033129,
+  "lon": -68.1275236,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 8573405081,
+  "lat": -16.5042014,
+  "lon": -68.1259740,
+  "tags": {
+    "aerialway": "yes",
+    "bench": "no",
+    "level": "1",
+    "name": "Teatro al Aire Libre / Layqa Quta",
+    "name:ay": "Layqa Quta",
+    "name:es": "Teatro al Aire Libre",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "platform",
+    "shelter": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 8573405082,
+  "lat": -16.5042217,
+  "lon": -68.1260017,
+  "tags": {
+    "aerialway": "yes",
+    "level": "1",
+    "name": "Teatro al Aire Libre / Layqa Quta",
+    "name:ay": "Layqa Quta",
+    "name:es": "Teatro al Aire Libre",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "platform",
+    "shelter": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 8573405083,
+  "lat": -16.5040809,
+  "lon": -68.1261290,
+  "tags": {
+    "aerialway": "yes",
+    "bench": "yes",
+    "level": "1",
+    "name": "Teatro al Aire Libre / Layqa Quta",
+    "name:ay": "Layqa Quta",
+    "name:es": "Teatro al Aire Libre",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "platform",
+    "shelter": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 8573405084,
+  "lat": -16.5041107,
+  "lon": -68.1261453,
+  "tags": {
+    "aerialway": "yes",
+    "level": "1",
+    "name": "Teatro al Aire Libre / Layqa Quta",
+    "name:ay": "Layqa Quta",
+    "name:es": "Teatro al Aire Libre",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "platform",
+    "shelter": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 11139374801,
+  "lat": -16.5096255,
+  "lon": -68.1210558,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 11139375734,
+  "lat": -16.5082843,
+  "lon": -68.1210138,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 11139375737,
+  "lat": -16.5069854,
+  "lon": -68.1210238,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 11139911291,
+  "lat": -16.4966832,
+  "lon": -68.1212151,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 11260254494,
+  "lat": -16.5009495,
+  "lon": -68.1329407,
+  "tags": {
+    "check_date": "2024-02-11",
+    "entrance": "main"
+  }
+},
+{
+  "type": "node",
+  "id": 12877958524,
+  "lat": -16.5007658,
+  "lon": -68.1323481
+},
+{
+  "type": "node",
+  "id": 12924930984,
+  "lat": -16.5000512,
+  "lon": -68.1349610
+},
+{
+  "type": "node",
+  "id": 12924930985,
+  "lat": -16.5001097,
+  "lon": -68.1354829
+},
+{
+  "type": "node",
+  "id": 12924930986,
+  "lat": -16.5001253,
+  "lon": -68.1354644
+},
+{
+  "type": "node",
+  "id": 12924930987,
+  "lat": -16.5000123,
+  "lon": -68.1352997
+},
+{
+  "type": "node",
+  "id": 12924930989,
+  "lat": -16.4999473,
+  "lon": -68.1350421
+},
+{
+  "type": "node",
+  "id": 12924930990,
+  "lat": -16.4999755,
+  "lon": -68.1349980
+},
+{
+  "type": "node",
+  "id": 12924930991,
+  "lat": -16.5000116,
+  "lon": -68.1350214
+},
+{
+  "type": "node",
+  "id": 12924930997,
+  "lat": -16.5004391,
+  "lon": -68.1352250
+},
+{
+  "type": "node",
+  "id": 12924930998,
+  "lat": -16.5004381,
+  "lon": -68.1352387
+},
+{
+  "type": "node",
+  "id": 12924930999,
+  "lat": -16.5004339,
+  "lon": -68.1352124
+},
+{
+  "type": "node",
+  "id": 12924931000,
+  "lat": -16.5003063,
+  "lon": -68.1353758,
+  "tags": {
+    "check_date": "2024-02-11",
+    "entrance": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 12924933801,
+  "lat": -16.5002231,
+  "lon": -68.1350643,
+  "tags": {
+    "check_date": "2024-02-11",
+    "entrance": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 12924933802,
+  "lat": -16.5001631,
+  "lon": -68.1350234,
+  "tags": {
+    "check_date": "2024-02-11",
+    "entrance": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 12924933806,
+  "lat": -16.5001952,
+  "lon": -68.1350453
+},
+{
+  "type": "node",
+  "id": 12924933807,
+  "lat": -16.5002023,
+  "lon": -68.1350501
+},
+{
+  "type": "node",
+  "id": 12924933815,
+  "lat": -16.5002466,
+  "lon": -68.1350803
+},
+{
+  "type": "node",
+  "id": 12924933819,
+  "lat": -16.5003257,
+  "lon": -68.1351343
+},
+{
+  "type": "node",
+  "id": 12924933820,
+  "lat": -16.5003605,
+  "lon": -68.1351581
+},
+{
+  "type": "node",
+  "id": 12924933826,
+  "lat": -16.5004091,
+  "lon": -68.1352731
+},
+{
+  "type": "node",
+  "id": 12924933833,
+  "lat": -16.5001155,
+  "lon": -68.1354534
+},
+{
+  "type": "node",
+  "id": 12924933834,
+  "lat": -16.5001622,
+  "lon": -68.1355199
+},
+{
+  "type": "node",
+  "id": 13472537511,
+  "lat": -16.5067906,
+  "lon": -68.1451049,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 13472537994,
+  "lat": -16.5073404,
+  "lon": -68.1459806,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 13472537995,
+  "lat": -16.5054836,
+  "lon": -68.1432175,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 13472537996,
+  "lat": -16.5042008,
+  "lon": -68.1412470,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 13472537997,
+  "lat": -16.5032271,
+  "lon": -68.1399701,
+  "tags": {
+    "aerialway": "pylon",
+    "check_date": "2024-02-11"
+  }
+},
+{
+  "type": "node",
+  "id": 13472537998,
+  "lat": -16.5022071,
+  "lon": -68.1384394,
+  "tags": {
+    "aerialway": "pylon",
+    "check_date": "2024-02-11"
+  }
+},
+{
+  "type": "node",
+  "id": 13472537999,
+  "lat": -16.5011998,
+  "lon": -68.1369246,
+  "tags": {
+    "aerialway": "pylon",
+    "check_date": "2024-02-11"
+  }
+},
+{
+  "type": "node",
+  "id": 13472538000,
+  "lat": -16.5004170,
+  "lon": -68.1357454,
+  "tags": {
+    "aerialway": "pylon",
+    "check_date": "2024-02-11"
+  }
+},
+{
+  "type": "node",
+  "id": 13516106188,
+  "lat": -16.5181351,
+  "lon": -68.1496682,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 13516106189,
+  "lat": -16.5166341,
+  "lon": -68.1465237,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 13516106190,
+  "lat": -16.5153579,
+  "lon": -68.1425592,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 13613001264,
+  "lat": -16.5028441,
+  "lon": -68.1393951,
+  "tags": {
+    "aerialway": "pylon",
+    "check_date": "2024-02-11"
+  }
+},
+{
+  "type": "node",
+  "id": 13613001265,
+  "lat": -16.5001765,
+  "lon": -68.1353817,
+  "tags": {
+    "aerialway": "pylon",
+    "check_date": "2024-02-11"
+  }
+},
+{
+  "type": "node",
+  "id": 13613107735,
+  "lat": -16.5001136,
+  "lon": -68.1354885
+},
+{
+  "type": "node",
+  "id": 13621682349,
+  "lat": -16.5124178,
+  "lon": -68.1195802,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 13623262833,
+  "lat": -16.5155930,
+  "lon": -68.1444007,
+  "tags": {
+    "aerialway": "pylon"
+  }
+},
+{
+  "type": "node",
+  "id": 13628741054,
+  "lat": -16.5000380,
+  "lon": -68.1349811
+},
+{
+  "type": "node",
+  "id": 13641174834,
+  "lat": -16.5001344,
+  "lon": -68.1350039
+},
+{
+  "type": "node",
+  "id": 13641174841,
+  "lat": -16.4999093,
+  "lon": -68.1350267
+},
+{
+  "type": "node",
+  "id": 13641290014,
+  "lat": -16.4999044,
+  "lon": -68.1350211
+},
+{
+  "type": "node",
+  "id": 13641290015,
+  "lat": -16.4998403,
+  "lon": -68.1350814
+},
+{
+  "type": "node",
+  "id": 13704694416,
+  "lat": -16.5005174,
+  "lon": -68.1323063
+},
+{
+  "type": "node",
+  "id": 13704694423,
+  "lat": -16.5004754,
+  "lon": -68.1324679
+},
+{
+  "type": "node",
+  "id": 13704694424,
+  "lat": -16.5006129,
+  "lon": -68.1322856
+},
+{
+  "type": "node",
+  "id": 13704694431,
+  "lat": -16.5006898,
+  "lon": -68.1323180
+},
+{
+  "type": "node",
+  "id": 13704694436,
+  "lat": -16.5004548,
+  "lon": -68.1325118
+},
+{
+  "type": "node",
+  "id": 13704694439,
+  "lat": -16.5004207,
+  "lon": -68.1325844
+},
+{
+  "type": "node",
+  "id": 13704694449,
+  "lat": -16.5009329,
+  "lon": -68.1329541
+},
+{
+  "type": "node",
+  "id": 13704694450,
+  "lat": -16.5009643,
+  "lon": -68.1329282
+},
+{
+  "type": "node",
+  "id": 13704694473,
+  "lat": -16.5007019,
+  "lon": -68.1325806
+},
+{
+  "type": "node",
+  "id": 13704694474,
+  "lat": -16.5007396,
+  "lon": -68.1326269
+},
+{
+  "type": "node",
+  "id": 13704694481,
+  "lat": -16.5005934,
+  "lon": -68.1322774,
+  "tags": {
+    "access": "permissive",
+    "check_date": "2024-02-11",
+    "entrance": "main"
+  }
+},
+{
+  "type": "node",
+  "id": 13704694485,
+  "lat": -16.5004657,
+  "lon": -68.1324887,
+  "tags": {
+    "access": "permissive",
+    "check_date": "2024-02-11",
+    "entrance": "main"
+  }
+},
+{
+  "type": "node",
+  "id": 13704694491,
+  "lat": -16.5003284,
+  "lon": -68.1327804
+},
+{
+  "type": "node",
+  "id": 13704694492,
+  "lat": -16.5003884,
+  "lon": -68.1326254
+},
+{
+  "type": "node",
+  "id": 13704694495,
+  "lat": -16.5003524,
+  "lon": -68.1326907
+},
+{
+  "type": "way",
+  "id": 193350983,
+  "nodes": [
+    2038568217,
+    13641174834,
+    12924933802,
+    12924933806,
+    12924933807,
+    12924933801,
+    12924933815,
+    12924933819,
+    6056029822,
+    12924933820,
+    2038568215,
+    12924930999,
+    12924930997,
+    12924930998,
+    2038568221,
+    12924933826,
+    12924931000,
+    12924933834,
+    2038568220,
+    13613107735,
+    12924930985,
+    12924930986,
+    12924933833,
+    12924930987,
+    5893891214,
+    13641290015,
+    5893891212,
+    13641290014,
+    13641174841,
+    6056029810,
+    12924930989,
+    12924930990,
+    12924930991,
+    13628741054,
+    12924930984,
+    2038568217
+  ],
+  "tags": {
+    "addr:housenumber": "170",
+    "addr:street": "Calle Almirante Grau",
+    "aerialway": "station",
+    "aerialway:access": "both",
+    "aerialway:summer:access": "both",
+    "check_date": "2024-02-11",
+    "fence_type": "metal_bars",
+    "name": "Estación San José - Utjäwi",
+    "name:ay": "Utjäwi",
+    "name:es": "Estación San José",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "payment:cards": "yes",
+    "payment:cash": "yes",
+    "place": "plot",
+    "public_transport": "station",
+    "wheelchair": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 468979884,
+  "nodes": [
+    3088906660,
+    13516106188,
+    4900724035,
+    13516106189,
+    4900724036,
+    4900724037,
+    13623262833,
+    3088943774,
+    4900724038,
+    13516106190,
+    5899539182,
+    5899539181,
+    5899539180,
+    5899539179,
+    5150016904,
+    5899539178,
+    6648434392,
+    5911962400,
+    5911962399,
+    3088943780,
+    5910304042,
+    5150016903,
+    6648434406,
+    5150016902,
+    6100304007,
+    5149990589,
+    3984125983,
+    6100304005,
+    6100304006,
+    4795800948,
+    5336307794,
+    6648434407
+  ],
+  "tags": {
+    "aerialway": "gondola",
+    "aerialway:bicycle": "yes",
+    "aerialway:bubble": "yes",
+    "aerialway:cabines": "169",
+    "aerialway:capacity": "3000",
+    "aerialway:duration": "13.50",
+    "aerialway:heating": "no",
+    "aerialway:occupancy": "10",
+    "colour": "#FFFF00",
+    "name": "Línea Amarilla: Mirador-El Libertador",
+    "name:ay": "Qhana Pata ↔ Chuqi Apu",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "wikidata": "Q104373350"
+  }
+},
+{
+  "type": "way",
+  "id": 527862276,
+  "nodes": [
+    5130977708,
+    5130977709,
+    5130977710,
+    5130977711,
+    5130977708
+  ],
+  "tags": {
+    "aerialway": "station",
+    "aerialway:access": "both",
+    "building": "transportation",
+    "building:levels": "2",
+    "level": "3",
+    "name": "Estación Plaza Triangular / Kimsachata",
+    "name:ay": "Kimsachata",
+    "name:es": "Estación Plaza Triangular",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "station",
+    "roof:shape": "flat",
+    "wheelchair": "limited"
+  }
+},
+{
+  "type": "way",
+  "id": 550034671,
+  "nodes": [
+    5312958285,
+    5312958288,
+    5312958287,
+    5130973514,
+    5312958286,
+    5312958289,
+    5312958290,
+    5312958291,
+    5312958292,
+    5312958293,
+    5312958294,
+    5312958308,
+    5312958309,
+    5312958310,
+    11139911291,
+    5312958311,
+    5312958312,
+    5312958313,
+    5312958314,
+    5312958315,
+    5312958316,
+    5312958317,
+    5312958318,
+    5312958319,
+    11139375737,
+    11139375734,
+    11139374801,
+    6577720218,
+    5312958320
+  ],
+  "tags": {
+    "aerialway": "gondola",
+    "aerialway:bicycle": "yes",
+    "aerialway:bubble": "yes",
+    "aerialway:cabines": "131",
+    "aerialway:capacity": "3000",
+    "aerialway:duration": "10",
+    "aerialway:heating": "no",
+    "aerialway:occupancy": "10",
+    "bicycle": "yes",
+    "colour": "#FFFFFF",
+    "foot": "yes",
+    "name": "Teleférico Línea Blanca: Villarroel ↔San Jorge",
+    "name:ay": "Inalmama ↔ Jalsuri",
+    "network": "Mi Teleférico",
+    "oneway": "no",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "wikidata": "Q104373465"
+  }
+},
+{
+  "type": "way",
+  "id": 568547581,
+  "nodes": [
+    5462285807,
+    6708488094,
+    8573395112,
+    8573395111,
+    6577745687,
+    6577745685,
+    5656816017,
+    6577745686,
+    5742371776,
+    5313014430,
+    6577720251,
+    13621682349,
+    6093970128,
+    6093970127,
+    6093970126,
+    5462285810
+  ],
+  "tags": {
+    "aerialway": "gondola",
+    "aerialway:bicycle": "yes",
+    "aerialway:bubble": "yes",
+    "aerialway:cabines": "159",
+    "aerialway:capacity": "4000",
+    "aerialway:duration": "11.50",
+    "aerialway:heating": "no",
+    "aerialway:occupancy": "10",
+    "colour": "skyblue",
+    "layer": "1",
+    "name": "Teleférico Línea Celeste: El Prado ↔ Libertador",
+    "name:ay": "Prado ↔ Chuqi Apu",
+    "network": "Mi Teleférico",
+    "oneway": "no",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "operator:short": "Mi Teleférico",
+    "operator:type": "public",
+    "wikidata": "Q104373483"
+  }
+},
+{
+  "type": "way",
+  "id": 571673398,
+  "nodes": [
+    6119442448,
+    6708488103,
+    6708488102,
+    13704694491,
+    6708488101,
+    13704694495,
+    13704694492,
+    6708488109,
+    5159663317,
+    13704694439,
+    13704694436,
+    13704694485,
+    13704694423,
+    5159663821,
+    13704694416,
+    5159663318,
+    13704694481,
+    13704694424,
+    13704694431,
+    6406873959,
+    5493660653,
+    12877958524,
+    6760957715,
+    6760957714,
+    4386585634,
+    13704694473,
+    13704694474,
+    5493660654,
+    13704694450,
+    11260254494,
+    13704694449,
+    6708488106,
+    6708488029,
+    6119442448
+  ],
+  "tags": {
+    "aerialway": "station",
+    "aerialway:access": "both",
+    "barrier": "fence",
+    "check_date": "2024-02-11",
+    "fence_type": "metal_bars",
+    "name": "Estación Prado - Chukiya Marka",
+    "name:ay": "Chukiya Marka",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "station",
+    "wheelchair": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 626224787,
+  "nodes": [
+    5911962401,
+    5911962402,
+    5911962403,
+    5911962411,
+    5911962404,
+    5911962413,
+    5911962405,
+    5911962406,
+    5911962407,
+    5911962408,
+    5911962412,
+    5911962454,
+    5911962409,
+    5911962410,
+    5911962401
+  ],
+  "tags": {
+    "addr:street": "Calle Mendez Arcos",
+    "aerialway": "station",
+    "aerialway:access": "both",
+    "barrier": "fence",
+    "name": "Estación Sopocachi / Supu Kachi",
+    "name:ay": "Supu Kachi",
+    "name:es": "Estación Sopocachi",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "station",
+    "wheelchair": "limited"
+  }
+},
+{
+  "type": "way",
+  "id": 629624209,
+  "nodes": [
+    5313014433,
+    7902213769,
+    6348400708,
+    6348400709,
+    13472537994,
+    13472537511,
+    13472537995,
+    13472537996,
+    13472537997,
+    13613001264,
+    13472537998,
+    13472537999,
+    13472538000,
+    13613001265,
+    5656816018
+  ],
+  "tags": {
+    "aerialway": "gondola",
+    "aerialway:bicycle": "yes",
+    "aerialway:bubble": "yes",
+    "aerialway:capacity": "4000",
+    "aerialway:duration": "8.21",
+    "aerialway:heating": "no",
+    "aerialway:occupancy": "10",
+    "check_date": "2024-02-11",
+    "colour": "#8E2C8D",
+    "name": "Teleférico Línea Morada: Faro Murillo ↔ Obelisco",
+    "name:ay": "Tiquira ↔ Utjäwi",
+    "network": "Mi Teleférico",
+    "oneway": "no",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "wheelchair": "yes",
+    "wikidata": "Q104373508"
+  }
+},
+{
+  "type": "way",
+  "id": 743625372,
+  "nodes": [
+    5130977708,
+    5130977709,
+    5130977710,
+    5130977711,
+    5130977708
+  ],
+  "tags": {
+    "addr:city": "La Paz",
+    "addr:neighbourhood": "Miraflores",
+    "addr:street": "Plaza Triangular",
+    "aerialway": "station",
+    "aerialway:access": "both",
+    "building": "transportation",
+    "building:levels": "3",
+    "level": "3",
+    "name": "Estación Plaza Triangular",
+    "name:ay": "Kimsachaca",
+    "name:es": "Estación Plaza Triangular",
+    "network": "Mi Teleférico",
+    "operator": "Empresa Estatal de Transporte por Cable Mi Teleférico",
+    "public_transport": "station",
+    "roof:levels": "0",
+    "roof:shape": "flat",
+    "wheelchair": "yes"
+  }
+}
+
+  ]
+}

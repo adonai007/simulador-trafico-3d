@@ -99,6 +99,23 @@
       bottom: 24px; left: 50%; transform: translateX(-50%);
       display: none; font-size: 13px; padding: 10px 18px; z-index: 40;
     }
+
+    /* Modo tour (V4 D3) — panel guiado, oculto hasta activarse */
+    #tour {
+      bottom: 24px; left: 50%; transform: translateX(-50%);
+      display: none; flex-direction: column; gap: 10px; align-items: stretch;
+      min-width: 320px; max-width: 420px; z-index: 41; text-align: center;
+    }
+    #tour.visible { display: flex; }
+    #tour-caption { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.4; }
+    #tour-scene { font-size: 11px; color: var(--text-dim); letter-spacing: 0.04em; }
+    #tour-controls { display: flex; gap: 8px; justify-content: center; }
+    #tour-controls button {
+      padding: 7px 14px; font-size: 13px; font-weight: 600; color: #0d1117;
+      background: var(--accent); border: none; border-radius: 6px; cursor: pointer; font-family: var(--font);
+    }
+    #tour-controls button:hover { filter: brightness(1.1); }
+    #tour-controls button.secondary { color: var(--text); background: rgba(255,255,255,0.08); }
   </style>
 </head>
 <body>
@@ -136,6 +153,18 @@
   </div>
 
   <div id="toast" class="panel"></div>
+
+  <!-- Modo tour (V4 D3) — oculto; tour.js controla #tour.visible, la leyenda
+       y los botones (▶ Reproducir / ⏭ Siguiente / ⏸ Pausa). -->
+  <div id="tour" class="panel">
+    <div id="tour-scene">Modo tour</div>
+    <div id="tour-caption">Recorrido guiado por escenarios de tráfico.</div>
+    <div id="tour-controls">
+      <button id="tour-play" type="button">▶ Reproducir</button>
+      <button id="tour-next" type="button" class="secondary">⏭ Siguiente</button>
+      <button id="tour-pause" type="button" class="secondary">⏸ Pausa</button>
+    </div>
+  </div>
 
   <script type="module" src="/src/main.js"></script>
 </body>

@@ -285,6 +285,73 @@ export const CONFIG = {
     windows: { emissive: 0xffd089, maxIntensity: 0.15 },
   },
 
+  // ============================================================
+  // V4 — Vista satélite (D1) + Teleférico (D2) + Compartir/Tour (D3)
+  // Stub keys with IDENTITY / off-safe defaults. Feature agents fill the
+  // remaining tunables inside their own Dx block; the scaffold guarantees
+  // every read resolves to a no-op (satellite OFF, share/tour identity).
+  // ============================================================
+
+  // ---- D1: Vista satélite ----------------------------------------------
+  // view = the satellite/low-poly toggle state. satellite:false => no imagery
+  // is ever fetched or draped (zero behavioral change until D1 lands).
+  view: {
+    satellite: false, // initial «Vista satélite» checkbox state (OFF = stylized)
+  },
+  // --- D1 --- satellite tunables (Esri World Imagery). Agent D1 may extend.
+  satellite: {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    maxZoom: 18,
+    minZoom: 15,
+    maxTiles: 64,
+    maxCanvasPx: 4096,
+    concurrency: 6,
+    tileTimeoutMs: 12_000,
+    buildingOpacity: 0.5, // buildings go semi-transparent while satellite ON
+    attribution: 'Imágenes © Esri, Maxar, Earthstar Geographics',
+  },
+  // --- end D1 ---
+
+  // ---- D2: Teleférico Mi Teleférico ------------------------------------
+  // enabled:true is off-safe — the aerialway only renders if OSM data yields
+  // lines (default/searched). No data => no teleférico (graceful like buildings).
+  // --- D2 --- aerialway tunables. Agent D2 may extend.
+  aerialway: {
+    enabled: true, // «Teleférico» checkbox state (renders only if lines exist)
+    cableHeightM: 30,
+    towerHeightM: 25,
+    cableRadiusM: 0.15,
+    sampleStepM: 8,
+    cabinsPerLine: 6,
+    cabinSpeedMs: 8,
+    cabinSize: { l: 3.2, w: 2.0, h: 2.6 },
+    lineColors: {
+      Roja: 0xd0021b,
+      Amarilla: 0xf5a623,
+      Verde: 0x2e7d32,
+      Azul: 0x1565c0,
+      Naranja: 0xef6c00,
+      Blanca: 0xeceff1,
+      Celeste: 0x4fc3f7,
+      Café: 0x6d4c41,
+      Plateada: 0x9e9e9e,
+      Morada: 0x6a1b9a,
+    },
+    palette: [0xd0021b, 0xf5a623, 0x2e7d32, 0x1565c0, 0xef6c00],
+  },
+  // --- end D2 ---
+
+  // ---- D3: Compartir por URL + modo tour -------------------------------
+  // --- D3 --- share/tour tunables. Agent D3 may extend.
+  share: {
+    paramVersion: 1, // URL scenario schema version (share.js serializer)
+  },
+  tour: {
+    autoHoldMs: 9000, // auto-advance dwell per scene
+    closeMainEdge: true, // tour scene 3 closes the longest main edge
+  },
+  // --- end D3 ---
+
   // ---- Rendering ----
   render: {
     roadY: 0.02,

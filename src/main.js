@@ -6,7 +6,7 @@
 
 import { CONFIG } from './config.js';
 import { buildNetwork } from './network/build.js';
-import { fetchNetworkOsm } from './osm/overpass.js';
+import { fetchNetworkOsm, fetchAerialwayOsm } from './osm/overpass.js'; // D2 adds fetchAerialwayOsm
 import { createProjection } from './geo/projection.js';
 import {
   FLAT_SAMPLER,
@@ -23,6 +23,9 @@ import { createBusStopsMesh } from './render/busStopsMesh.js';
 import { createWorksMesh } from './render/worksMesh.js'; // C1: cones + hazards
 import { createStreetLampsMesh } from './render/streetLampsMesh.js'; // C2
 import { createEnvironment } from './render/environment.js'; // C2
+import { loadSatellite, loadDefaultSatellite } from './render/satellite.js'; // D1
+import { buildAerialways } from './network/aerialway.js'; // D2
+import { createAerialwayMesh } from './render/aerialwayMesh.js'; // D2
 import { createStreetNames } from './render/streetNames.js';
 import { addBuildings } from './render/buildings.js';
 import { createPicking } from './render/picking.js';
@@ -34,6 +37,10 @@ import { createSpaceTime } from './ui/spaceTime.js';
 import { createFollow } from './ui/follow.js';
 import { initExplainer } from './ui/explainer.js';
 import { createSearch, showToast } from './ui/search.js';
+// --- D3 --- compartir por URL + modo tour.
+import { createShare, bootShare } from './ui/share.js';
+import { createTour } from './ui/tour.js';
+// --- end D3 ---
 
 window.__SIM__ = { ready: false };
 
@@ -41,7 +48,10 @@ const DT = CONFIG.sim.dt;
 
 // app.world is the swappable unit: network + sim + all per-network meshes.
 // app.environment (C2) is app-owned and survives world swaps (D4).
-const app = { view: null, world: null, environment: null };
+// app.lastQuery / app.tour (D3) are app-owned and survive world swaps:
+//   lastQuery = the last successful search (share.js emits `q=` from it);
+//   tour      = the guided-tour controller (createTour, assigned in init()).
+const app = { view: null, world: null, environment: null, lastQuery: null, tour: null };
 
 /** Camera-fit bbox: clamp to the query radius so boundary stubs don't zoom us out. */
 function clampBbox(bbox, r) {
@@ -88,6 +98,24 @@ function makeWorld(network, radiusM) {
   view.scene.add(streetLampsMesh.group);
   // --- end C2 ---
 
+  // --- D1 (makeWorld:create) ---
+  // Satellite imagery loads fire-and-forget AFTER the world exists (see
+  // attachSatellite); starts null. terrain may be null in flat zones — the
+  // drape needs a terrain mesh, so a null terrain simply never drapes.
+  let satellite = null;
+  // --- end D1 (makeWorld:create) ---
+
+  // --- D2 (makeWorld:create) ---
+  // The aerialway needs the raw Overpass aerialway JSON (NOT part of `network`,
+  // which is highway-only). So `aerialwayMesh` starts null and is filled by a
+  // fire-and-forget attachAerialway(world, source) AFTER the world exists:
+  //   - default zone  -> fetch the bundled public/data/default-aerialway.json
+  //   - searched zone -> fetchAerialwayOsm(lat,lon,r) (see D2 rebuildWorld:attach)
+  // attachAerialway builds lines via buildAerialways(osm, projection, elevation),
+  // and only creates the mesh when lines exist (graceful empty otherwise).
+  let aerialwayMesh = null;
+  // --- end D2 (makeWorld:create) ---
+
   const world = {
     network,
     sim,
@@ -100,6 +128,34 @@ function makeWorld(network, radiusM) {
     vehiclesMesh,
     worksMesh, // C1: per-world cones/hazards
     streetLampsMesh, // C2: per-world lamps (null until C2 lands)
+    // --- D1 (world:fields) ---
+    satellite, // loaded imagery handle (CanvasTexture+dispose) or null
+    /**
+     * Apply (or remove) building semi-transparency for the satellite view.
+     * KEEP depthWrite=true on the merged building mesh — depthWrite=false on a
+     * single merged InstancedMesh causes self-sort flicker (documented tradeoff,
+     * spec D1). Reads the persisted «Vista satélite» param via __SIM__.
+     */
+    applySatelliteToBuildings() {
+      const mesh = world.buildings?.mesh;
+      if (!mesh) return;
+      const on = !!window.__SIM__?.satellite?.enabled;
+      const m = mesh.material;
+      if (on) {
+        m.transparent = true;
+        m.opacity = CONFIG.satellite.buildingOpacity;
+        m.depthWrite = true; // keep — avoids merged-mesh self-sort artifacts
+      } else {
+        m.transparent = false;
+        m.opacity = 1;
+        m.depthWrite = true;
+      }
+      m.needsUpdate = true;
+    },
+    // --- end D1 (world:fields) ---
+    // --- D2 (world:fields) ---
+    aerialwayMesh, // null until attachAerialway resolves with >=1 line
+    // --- end D2 (world:fields) ---
     buildings: null,
     radiusM,
     dispose() {
@@ -132,6 +188,19 @@ function makeWorld(network, radiusM) {
         world.streetLampsMesh.dispose();
       }
       // --- end C2 ---
+      // --- D1 (dispose) ---
+      // Release the loaded satellite imagery on world swap. terrain.dispose()
+      // already frees the terrain material/geometry; this frees the CanvasTexture.
+      world.satellite?.dispose();
+      world.satellite = null;
+      // --- end D1 (dispose) ---
+      // --- D2 (dispose) ---
+      if (world.aerialwayMesh) {
+        view.scene.remove(world.aerialwayMesh.group);
+        world.aerialwayMesh.dispose();
+        world.aerialwayMesh = null;
+      }
+      // --- end D2 (dispose) ---
       if (world.buildings) {
         world.buildings.dispose();
         world.buildings = null;
@@ -157,12 +226,81 @@ function attachBuildings(world, opts) {
         // --- C2 --- re-apply window emissive to the freshly attached buildings.
         app.environment?.refreshWorld?.();
         // --- end C2 ---
+        // --- D1 (attachBuildings:resolve) ---
+        // Re-apply satellite building transparency to the freshly attached
+        // buildings (their material is created here, AFTER the toggle may
+        // already be ON).
+        world.applySatelliteToBuildings?.();
+        // --- end D1 (attachBuildings:resolve) ---
       } else {
         b.dispose();
       }
     })
     .catch((err) => console.warn('[buildings] fallo:', err));
 }
+
+// --- D1 --- fire-and-forget satellite attach (Vista satélite). `source` is
+// null/undefined for the bundled default-zone snapshot (loadDefaultSatellite)
+// or { lat, lon, radius } for a searched zone (loadSatellite). On resolve:
+//   - drop if the world was swapped while fetching (app.world !== world);
+//   - stash world.satellite (so dispose frees the texture even if never draped);
+//   - if the persisted «Vista satélite» toggle is ON, drape now; else keep idle
+//     until the user toggles it on (setSatellite reads world.satellite).
+//   - null result + the toggle ON => toast «Sin imágenes satelitales…».
+function attachSatellite(world, source) {
+  const load = source
+    ? loadSatellite(world.network, { lat: source.lat, lon: source.lon, radius: source.radius })
+    : loadDefaultSatellite();
+  Promise.resolve(load)
+    .then((sat) => {
+      if (app.world !== world) {
+        sat?.dispose();
+        return;
+      }
+      world.satellite = sat;
+      const wantOn = !!window.__SIM__?.satellite?.enabled;
+      if (!sat) {
+        if (wantOn) showToast('Sin imágenes satelitales para esta zona');
+        return;
+      }
+      if (wantOn) {
+        world.terrain?.setSatellite(sat);
+        world.applySatelliteToBuildings?.();
+      }
+    })
+    .catch((err) => console.warn('[satélite] fallo:', err));
+}
+// --- end D1 ---
+
+// --- D2 --- fire-and-forget aerialway attach (Mi Teleférico). `source` is
+// either { url } for the bundled default-zone snapshot or { lat, lon, radius }
+// for a searched zone (live Overpass). Builds lines via buildAerialways and only
+// creates the mesh when >=1 line exists; dropped if the world was swapped while
+// fetching, or silently skipped on any failure/empty (graceful, like buildings).
+function attachAerialway(world, source) {
+  if (CONFIG.aerialway?.enabled === false) return; // off-safe global kill switch
+  const fetchOsm = source.url
+    ? fetch(source.url).then((r) => (r.ok ? r.json() : null))
+    : fetchAerialwayOsm(source.lat, source.lon, source.radius);
+  Promise.resolve(fetchOsm)
+    .then((osm) => {
+      if (!osm || app.world !== world) return;
+      const model = buildAerialways(osm, world.network.projection, world.network.elevation);
+      if (!model || !model.lines.length) return; // no teleférico in this zone
+      if (app.world !== world) return; // swapped during the async build
+      const mesh = createAerialwayMesh(model);
+      world.aerialwayMesh = mesh;
+      app.view.scene.add(mesh.group);
+      // Re-assert the persisted «Teleférico» checkbox onto the fresh mesh.
+      const want = window.__SIM__?.aerialwayWanted?.();
+      if (want === false) mesh.setVisible(false);
+      console.info(
+        `[teleférico] ${model.lines.length} línea(s), ${mesh.getState().cabins} cabinas`
+      );
+    })
+    .catch((err) => console.warn('[teleférico] fallo:', err));
+}
+// --- end D2 ---
 
 let acc = 0; // fixed-timestep accumulator (reset on world swap)
 
@@ -200,6 +338,12 @@ async function init() {
   // --- end C2 ---
   app.world = makeWorld(network, r);
   attachBuildings(app.world, null); // bundled snapshot
+  // --- D1 --- default-zone satellite from the bundled JPG+JSON snapshot.
+  attachSatellite(app.world, null);
+  // --- end D1 ---
+  // --- D2 --- default-zone teleférico from the bundled raw Overpass snapshot.
+  attachAerialway(app.world, { url: '/data/default-aerialway.json' });
+  // --- end D2 ---
 
   // ---- UI layer ----
   initExplainer();
@@ -309,11 +453,38 @@ async function init() {
     gui.applyTo(world); // user's demand/speed/cycle settings carry over
     hud.reset();
     attachBuildings(world, { lat: center.lat, lon: center.lon, radius: r });
+    // --- D1 (rebuildWorld:attach) ---
+    // Searched-zone satellite: fetch + stitch Esri tiles over the terrain plane,
+    // fire-and-forget. attachSatellite gates application on the persisted «Vista
+    // satélite» param and app.world===world; null result toasts if the toggle
+    // is on, otherwise the zone simply has no imagery.
+    attachSatellite(world, { lat: center.lat, lon: center.lon, radius: r });
+    // --- end D1 (rebuildWorld:attach) ---
+    // --- D2 (rebuildWorld:attach) ---
+    // Searched-zone teleférico: fetch live Overpass aerialway data at a WIDER
+    // radius than the road disc (cable lines span km — a small disc clips every
+    // line). attachAerialway gates on app.world===world and skips gracefully on
+    // empty/offline so most zones simply have no teleférico.
+    attachAerialway(world, { lat: center.lat, lon: center.lon, radius: Math.max(r, 1500) });
+    // --- end D2 (rebuildWorld:attach) ---
     if (network2.spawnMode === 'onNetwork') {
       // Not silent (V2.1 A): zero entries (or exits) -> on-network spawning.
       console.info('[rebuild] red sin entradas/salidas — generación interna (onNetwork)');
       showToast('Zona sin conexiones al exterior — generación interna activada');
     }
+    // --- D3 (rebuildWorld:success) ---
+    // Stash the successful query on `app` so share.js emits `q=` (a stable
+    // place name that survives OSM rebuilds) instead of raw center/radius for
+    // searched zones. The query text comes either from the share-restore caller
+    // (center.text) or, for an interactive search, from the live search input —
+    // read here so search.js needs no D3 changes.
+    {
+      const inputEl = document.getElementById("search-input");
+      const text =
+        (center && center.text) || (inputEl ? inputEl.value.trim() : "") || null;
+      app.lastQuery = { center: { lat: center.lat, lon: center.lon }, radius: r, text };
+    }
+    // --- end D3 (rebuildWorld:success) ---
     return true;
   }
   createSearch(rebuildWorld);
@@ -440,7 +611,77 @@ async function init() {
       return app.environment?.state ?? null;
     },
     // --- end C2 ---
+
+    // --- D1 --- satellite hooks (Vista satélite).
+    //   setSatellite(b) -> toggle the drape: persists the param, drapes/undrapes
+    //     the terrain imagery (if loaded) and building transparency. When the
+    //     imagery is still loading, the param is recorded and attachSatellite
+    //     applies it on resolve.
+    //   satellite -> { enabled: <persisted param>, ready: <imagery loaded?> }
+    //   terrainHasMap -> !!terrain.material.map (true only once draped)
+    setSatellite: (b) => {
+      const on = !!b;
+      gui && (gui.params.verSatelite = on);
+      const w = app.world;
+      if (!w) return;
+      if (on) {
+        if (w.satellite) w.terrain?.setSatellite(w.satellite);
+      } else {
+        w.terrain?.setSatellite(null);
+      }
+      w.applySatelliteToBuildings?.();
+    },
+    get satellite() {
+      return {
+        enabled: !!gui?.params?.verSatelite,
+        ready: !!app.world?.satellite,
+      };
+    },
+    get terrainHasMap() {
+      return !!app.world?.terrain?.mesh?.material?.map;
+    },
+    // --- end D1 ---
+
+    // --- D2 --- teleférico hooks (Mi Teleférico).
+    //   aerialway   -> { lines, cabins } | null  (null when the zone has none)
+    //   sampleCabin -> first cabin's live world {x,y,z} | null
+    //   setTeleferico/aerialwayWanted -> drive + read the «Teleférico» visibility
+    //     so attachAerialway can re-assert the persisted checkbox on a fresh mesh.
+    get aerialway() {
+      return app.world?.aerialwayMesh
+        ? app.world.aerialwayMesh.getState?.() ?? null
+        : null;
+    },
+    sampleCabin: () => app.world?.aerialwayMesh?.sampleCabin?.() ?? null,
+    setTeleferico: (b) => app.world?.aerialwayMesh?.setVisible?.(b),
+    aerialwayWanted: () => gui?.params?.verTeleferico ?? CONFIG.aerialway.enabled !== false,
+    // --- end D2 ---
+
+    // --- D3 --- compartir + tour hooks (no-ops until D3 lands).
+    // Agent D3 implements:
+    //   share: { url: () => buildShareUrl(serializeState(app, gui)),
+    //            copy: () => copyShareLink(app, gui) },
+    //   get tour() { return app.tour?.state ?? null; }  // {playing, scene, play, next, pause}
+    share: {
+      url: () => app.share?.url?.() ?? location.href, // D3 wires serializeState
+      copy: () => app.share?.copy?.(), // D3 wires copyShareLink
+    },
+    get tour() {
+      return app.tour ?? null; // D3 assigns app.tour = createTour(app, gui)
+    },
+    // --- end D3 ---
   };
+
+  // --- D3 (init:end) ---
+  // Wire share + tour AFTER window.__SIM__ is assigned (bootShare reads the live
+  // hooks and may call rebuildWorld). app.share/app.tour are read by the
+  // __SIM__.share/__SIM__.tour getters and the GUI «Escenario» buttons.
+  app.tour = createTour(app, gui);
+  app.share = createShare(app, gui);
+  // Boot-time URL restore: parse → ZONE FIRST (await rebuildWorld) →
+  // setters + gui.applyState → CLOSURES LAST (DESIGN-SPEC-V4 §D3).
+  bootShare(app, gui, rebuildWorld);
+  // --- end D3 (init:end) ---
 
   // ---- Fixed-timestep loop with accumulator + interpolation (spec §2.1) ----
   let last = performance.now();
@@ -473,6 +714,11 @@ async function init() {
       // --- C1 --- cones refresh on closureVersion change + hazard blink.
       world.worksMesh?.update?.(sim.time);
       // --- end C1 ---
+      // --- D2 (frame:update) --- gondola cabins ride WALL-CLOCK time (real dt,
+      // independent of sim speed/pause). Zero-alloc scratch inside; no-op while
+      // aerialwayMesh is null or the «Teleférico» layer is hidden.
+      world.aerialwayMesh?.update?.(wallDt);
+      // --- end D2 (frame:update) ---
       if (now >= nextHeat) {
         nextHeat = now + 1000 / (CONFIG.heatmap.updateHz ?? 1);
         world.roads.updateHeatmap(); // no-op while the heatmap is off
