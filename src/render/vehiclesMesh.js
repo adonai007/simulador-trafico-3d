@@ -44,6 +44,10 @@ const _pA = { x: 0, y: 0, z: 0 };
 const _pB = { x: 0, y: 0, z: 0 };
 const _hA = { x: 0, y: 0, z: 0 };
 const _hB = { x: 0, y: 0, z: 0 };
+// E2b replay: a reusable id -> frame-B vehicle-offset map. Cleared (not
+// reallocated) each updateFromReplay call — that path runs only while the user
+// scrubs, not in the live hot loop, so this is allocation-light, not zero-alloc.
+const _replayIdToOffB = new Map();
 
 /**
  * Interpolated vehicle pose (spec §2.1): lerp between the step-start snapshot
@@ -366,6 +370,25 @@ export function createVehiclesMesh(sim) {
   group.add(brakeMesh);
   const brakeDims = typeNames.map((t) => BRAKE_DIMS[t] || BRAKE_DIMS.sedan);
 
+  // --- E1: siren mesh setup ---
+  // ONE shared siren bar (unit box, MeshBasicMaterial, instanceColor) emitted on
+  // the roof of each isEmergency vehicle. Capacity = emergency.maxConcurrent; +1
+  // draw call only while ambulances are live (count 0 otherwise). update() blinks
+  // colorA/colorB per frame via setColorAt (brakeMesh allocation pattern).
+  const emCfg = CONFIG.emergency ?? {};
+  const sirenCfg = emCfg.siren ?? { barW: 1.4, barH: 0.18, barD: 0.5, y: 1.65, blinkHz: 4, colorA: 0x2030ff, colorB: 0xff2020 };
+  const sirenCapacity = Math.max(1, emCfg.maxConcurrent ?? 3);
+  const sirenGeom = new THREE.BoxGeometry(1, 1, 1);
+  const sirenMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const sirenMesh = new THREE.InstancedMesh(sirenGeom, sirenMat, sirenCapacity);
+  sirenMesh.count = 0;
+  sirenMesh.frustumCulled = false;
+  sirenMesh.castShadow = false;
+  sirenMesh.setColorAt(0, _color.setHex(sirenCfg.colorA)); // allocate instanceColor
+  group.add(sirenMesh);
+  let lastSirenCount = 0; // siren instances emitted last frame (e2e hook)
+  // --- end E1: siren mesh setup ---
+
   // C2 headlights (night only): warm dot boxes at the baked headlight spots +
   // ONE additive ground-pool quad ahead of each vehicle. Never real lights —
   // +2 draw calls at night, both meshes hidden (count 0) by day.
@@ -411,6 +434,17 @@ export function createVehiclesMesh(sim) {
     get headlightCount() {
       return lastHeadlightCount;
     },
+    // --- E1: mesh debug hooks ---
+    sirenMesh,
+    /** Siren instances emitted last frame (e2e hook). */
+    get sirenCount() {
+      return lastSirenCount;
+    },
+    /** Civilians currently yielding to an ambulance (mirrors sim.yieldingCount). */
+    get yieldingCount() {
+      return sim.yieldingCount ?? 0;
+    },
+    // --- end E1: mesh debug hooks ---
     /**
      * Sync instance matrices/colors from sim vehicles. `alpha` = accumulator
      * fraction acc/DT in [0,1] for §2.1 interpolation (defaults to 1 = snap).
@@ -422,6 +456,7 @@ export function createVehiclesMesh(sim) {
       let brakeCount = 0;
       let headDotCount = 0;
       let headPoolCount = 0;
+      let sirenCount = 0; // E1: siren instances emitted this frame
       const headsOn = nightFactor > 0.01;
       if (headsOn) headPoolMat.opacity = POOL_BASE_OPACITY * nightFactor;
       const vehicles = sim.vehicles;
@@ -513,6 +548,32 @@ export function createVehiclesMesh(sim) {
           _m.setPosition(bx, by, bz);
           brakeMesh.setMatrixAt(brakeCount++, _m);
         }
+        // --- E1: siren emit ---
+        // Roof siren bar for ambulances. The brake block above scaled the body
+        // basis (_right/_bUp/_fwd) in place, so recompute it from _h here (the
+        // planar heading + grade pitch — same frame the body matrix used). One
+        // instance per isEmergency vehicle, blinking colorA/colorB.
+        if (veh.isEmergency && sirenCount < sirenCapacity) {
+          _fwd.set(_h.x, _h.y, _h.z).normalize();
+          _right.crossVectors(_up, _fwd).normalize();
+          _bUp.crossVectors(_fwd, _right);
+          // Roof center = body pos + up * siren.y (vehicle-local up = _bUp).
+          const sx = px + _bUp.x * sirenCfg.y;
+          const sy = _p.y + 0.05 + _bUp.y * sirenCfg.y;
+          const sz = pz + _bUp.z * sirenCfg.y;
+          _right.multiplyScalar(sirenCfg.barW);
+          _bUp.multiplyScalar(sirenCfg.barH);
+          _fwd.multiplyScalar(sirenCfg.barD);
+          _m.makeBasis(_right, _bUp, _fwd);
+          _m.setPosition(sx, sy, sz);
+          sirenMesh.setMatrixAt(sirenCount, _m);
+          // Blink: alternate colorA/colorB on a sim-time phase.
+          const phase = Math.floor(t * sirenCfg.blinkHz) % 2;
+          _c.setHex(phase === 0 ? sirenCfg.colorA : sirenCfg.colorB);
+          sirenMesh.setColorAt(sirenCount, _c);
+          sirenCount++;
+        }
+        // --- end E1: siren emit ---
       }
       for (let k = 0; k < meshes.length; k++) {
         meshes[k].count = counts[k];
@@ -528,7 +589,148 @@ export function createVehiclesMesh(sim) {
       headPoolMesh.visible = headPoolCount > 0;
       headPoolMesh.instanceMatrix.needsUpdate = true;
       lastHeadlightCount = headPoolCount;
+      // --- E1: siren finalize ---
+      sirenMesh.count = sirenCount;
+      sirenMesh.instanceMatrix.needsUpdate = true;
+      if (sirenMesh.instanceColor) sirenMesh.instanceColor.needsUpdate = true;
+      lastSirenCount = sirenCount;
+      // --- end E1: siren finalize ---
     },
+    // --- E2b: updateFromReplay sibling method ---
+    // Agent E2b: add updateFromReplay(replay, scrubT) here as a SIBLING to
+    // update() above. Read the two replay frames bracketing scrubT (by
+    // frameTime), match vehicles by stored id, lerp x/y/z/heading, and build
+    // instance matrices with the SAME makeBasis block update() uses (heading
+    // from the stored angle, y from the stored elevation); set per-type counts
+    // from the per-frame vehCount so spawn/despawn is honored. Siren/headlights
+    // are intentionally skipped in replay (documented). main.js calls this
+    // instead of update() while replayMode is ON.
+    /**
+     * Render vehicles FROM the replay ring at sim-time `scrubT` (E2b). Finds the
+     * two frames bracketing scrubT by frameTime, matches stored vehicles by id,
+     * lerps x/y/z/heading, and rebuilds the per-type instance matrices with the
+     * SAME makeBasis frame update() uses (heading from the stored angle, planar;
+     * y from the stored elevation). Per-type counts come from the per-frame
+     * vehicle list so spawn/despawn across the window is honored. Siren,
+     * headlights and brake lights are intentionally NOT rendered in replay
+     * (the ring stores pose only) — those meshes are zeroed so no stale
+     * instances linger from the last live frame.
+     */
+    updateFromReplay(replay, scrubT) {
+      for (let k = 0; k < counts.length; k++) counts[k] = 0;
+      const stride = replay.stride;
+      const frameStride = replay.frameStride;
+      const fc = replay.frameCount;
+      const fTime = replay.frameTime;
+      const fVeh = replay.frameVehCount;
+      const data = replay.data;
+      // Find bracketing frames: A = newest frame with time <= scrubT,
+      // B = oldest frame with time >= scrubT. Scan all frames (only runs while
+      // scrubbing, not in the live hot loop). Empty slots carry time = -1.
+      let fA = -1;
+      let tA = -Infinity;
+      let fB = -1;
+      let tB = Infinity;
+      for (let f = 0; f < fc; f++) {
+        const t = fTime[f];
+        if (t < 0) continue; // empty slot
+        if (t <= scrubT && t > tA) {
+          tA = t;
+          fA = f;
+        }
+        if (t >= scrubT && t < tB) {
+          tB = t;
+          fB = f;
+        }
+      }
+      if (fA < 0 && fB < 0) {
+        // Ring empty — clear all vehicle + overlay meshes and bail.
+        for (let k = 0; k < meshes.length; k++) {
+          meshes[k].count = 0;
+          meshes[k].instanceMatrix.needsUpdate = true;
+        }
+        brakeMesh.count = 0;
+        brakeMesh.instanceMatrix.needsUpdate = true;
+        headDotsMesh.count = 0;
+        headDotsMesh.visible = false;
+        headPoolMesh.count = 0;
+        headPoolMesh.visible = false;
+        sirenMesh.count = 0; // E1: no siren in replay (pose-only ring)
+        sirenMesh.instanceMatrix.needsUpdate = true;
+        return;
+      }
+      // Clamp to a single frame at the window edges (no extrapolation).
+      if (fA < 0) {
+        fA = fB;
+        tA = tB;
+      }
+      if (fB < 0) {
+        fB = fA;
+        tB = tA;
+      }
+      const span = tB - tA;
+      const frac = span > 1e-6 ? (scrubT - tA) / span : 0;
+      const baseA = fA * frameStride;
+      const baseB = fB * frameStride;
+      const nA = fVeh[fA];
+      const nB = fVeh[fB];
+      // Build an id -> frame-B offset index so each frame-A vehicle can find its
+      // future pose to lerp toward. Cleared (not reallocated) per call.
+      _replayIdToOffB.clear();
+      for (let j = 0; j < nB; j++) {
+        const ob = baseB + j * stride;
+        _replayIdToOffB.set(data[ob], ob);
+      }
+      for (let i = 0; i < nA; i++) {
+        const oa = baseA + i * stride;
+        const ti = data[oa + 1] | 0; // typeIndex
+        if (ti < 0 || ti >= meshes.length) continue;
+        if (counts[ti] >= capacity) continue;
+        const id = data[oa];
+        let x = data[oa + 2];
+        let y = data[oa + 3];
+        let z = data[oa + 4];
+        let head = data[oa + 5];
+        const ob = _replayIdToOffB.get(id);
+        if (ob !== undefined) {
+          // Vehicle present in both frames — lerp pose. Heading lerps as a
+          // shortest-arc angle so the wrap at ±π never spins the model.
+          x += (data[ob + 2] - x) * frac;
+          y += (data[ob + 3] - y) * frac;
+          z += (data[ob + 4] - z) * frac;
+          let dh = data[ob + 5] - head;
+          if (dh > Math.PI) dh -= 2 * Math.PI;
+          else if (dh < -Math.PI) dh += 2 * Math.PI;
+          head += dh * frac;
+        }
+        const idx = counts[ti]++;
+        const mesh = meshes[ti];
+        // Planar forward from the stored heading angle (atan2(hx,hz) on record).
+        // Replay skips pitch (grade) — pose-only ring, documented.
+        _fwd.set(Math.sin(head), 0, Math.cos(head)).normalize();
+        _right.crossVectors(_up, _fwd).normalize();
+        _bUp.crossVectors(_fwd, _right);
+        _m.makeBasis(_right, _bUp, _fwd);
+        _m.setPosition(x, y + 0.05, z);
+        mesh.setMatrixAt(idx, _m);
+        instanceIdToVehicle[ti][idx] = null; // no live veh behind a replay instance
+      }
+      // Commit per-type counts; zero the live-only overlay meshes so no stale
+      // brake/siren/headlight instances linger from the last live frame.
+      for (let k = 0; k < meshes.length; k++) {
+        meshes[k].count = counts[k];
+        meshes[k].instanceMatrix.needsUpdate = true;
+      }
+      brakeMesh.count = 0;
+      brakeMesh.instanceMatrix.needsUpdate = true;
+      headDotsMesh.count = 0;
+      headDotsMesh.visible = false;
+      headPoolMesh.count = 0;
+      headPoolMesh.visible = false;
+      sirenMesh.count = 0; // E1: no siren in replay (pose-only ring)
+      sirenMesh.instanceMatrix.needsUpdate = true;
+    },
+    // --- end E2b: updateFromReplay sibling method ---
     dispose() {
       for (const g of geoms) g.dispose();
       mat.dispose();
@@ -538,6 +740,10 @@ export function createVehiclesMesh(sim) {
       headDotMat.dispose();
       headPoolGeom.dispose();
       headPoolMat.dispose();
+      // --- E1: siren dispose ---
+      sirenGeom.dispose();
+      sirenMat.dispose();
+      // --- end E1: siren dispose ---
     },
   };
 }

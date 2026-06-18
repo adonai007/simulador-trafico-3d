@@ -352,6 +352,74 @@ export const CONFIG = {
   },
   // --- end D3 ---
 
+  // ============================================================
+  // V5 — Emergencias / Ambulancia (E1) + Datos: estadísticas/CSV (E2a) +
+  // Replay scrubber (E2b). Disjoint top-level keys, identity-safe defaults:
+  // every read resolves to a no-op until the feature agents wire behavior.
+  //   - emergency: no ambulance ever spawns unless callAmbulance() is invoked.
+  //   - stats: accumulators only; the panel is additive (no sim coupling).
+  //   - replay: a recorder ring; replayMode starts OFF (sim renders live).
+  // Each agent fills the remaining tunables INSIDE its own block.
+  // ============================================================
+
+  // ---- E1: Ambulancia / vehículos de emergencia ------------------------
+  // Emergency vehicles reuse an existing mesh slot (meshType) + isEmergency
+  // flag — never a 7th vehicle type. v0/accel/gap factors make them faster
+  // and tighter; the yield* tunables drive how civilians cede the curb lane.
+  // --- E1 --- emergency tunables. Agent E1 may extend.
+  emergency: {
+    enabled: true,
+    meshType: 'suv', // reuse the SUV InstancedMesh slot (valid typeIndex)
+    maxConcurrent: 3, // hard cap on live ambulances (counter in removeVehicle)
+    v0Factor: 1.35,
+    accelFactor: 1.4,
+    gapFactor: 0.55, // scales idm.T and idm.s0 (tighter following)
+    signalSlowdownMs: 6.0, // creep speed through a red (rolls, never v=0)
+    yieldRadiusM: 60, // markYields() near-term path walk distance
+    yieldLcSafeDecel: -7.0, // relaxed MOBIL safety bound for forced curb change
+    yieldEdgeOffsetM: 1.2, // lateral nudge toward the curb when no lane exists
+    yieldSlowFactor: 0.55, // v0 multiplier for a yielding civilian
+    siren: {
+      barW: 1.4,
+      barH: 0.18,
+      barD: 0.5,
+      y: 1.65, // roof offset (vehicle-local up)
+      blinkHz: 4, // colorA/colorB alternate by floor(time*blinkHz)%2
+      colorA: 0x2030ff,
+      colorB: 0xff2020,
+    },
+    color: { r: 0.93, g: 0.95, b: 0.97 }, // white ambulance body
+    routeToIncident: true, // route a called ambulance toward the last incident
+  },
+  // --- end E1 ---
+
+  // ---- E2a: Estadísticas + CSV -----------------------------------------
+  // Trip-stats accumulators + the metricsHistory ring cap. Identity-safe:
+  // zero completions, empty history — the «Estadísticas» panel reads these.
+  // --- E2a --- stats tunables. Agent E2a may extend.
+  stats: {
+    completionsWindowS: 60, // rolling window for rendimiento (veh/min)
+    metricsHistoryCap: 900, // ring length (~30 min at the ~2 s sample gate)
+    metricsSampleS: 2.0, // sim-time gate between metricsHistory samples
+    tripLogCap: 2000, // capped trip log for viajes.csv
+    bom: '﻿', // UTF-8 BOM so Excel renders Spanish accents
+  },
+  // --- end E2a ---
+
+  // ---- E2b: Replay scrubber --------------------------------------------
+  // Flat typed-array ring recorder. enabled:true is off-safe — the recorder
+  // fills the ring but replayMode starts OFF (main.js renders live until the
+  // user drags the scrubber). frameCount = ceil(windowS*recordHz).
+  // --- E2b --- replay tunables. Agent E2b may extend.
+  replay: {
+    enabled: true,
+    windowS: 180, // rewindable window (seconds of sim time)
+    recordHz: 4, // frames captured per sim-second (sim-time gated)
+    maxVehicles: 600, // per-frame vehicle cap (overflow dropped)
+    stride: 6, // floats per vehicle: [id, typeIndex, x, y, z, heading]
+  },
+  // --- end E2b ---
+
   // ---- Rendering ----
   render: {
     roadY: 0.02,

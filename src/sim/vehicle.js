@@ -80,6 +80,15 @@ export function createVehicle(rng, lane, type) {
     prevS: 0,
     _gone: false, // set on despawn (lets the follow camera detach)
     isPhantom: false, // V3 C1 incidents: stopped fake vehicle, lives ONLY in lane.vehicles
+    // --- E1 --- emergency fields (stable shape; identity-safe for civilians).
+    isEmergency: false, // V5 E1: ambulance flag on a reused mesh slot (not a 7th type)
+    _yielding: 0, // sim-time lease: civilian cedes the curb until this time (0 = none)
+    _yieldDir: 0, // curb (rightmost) lane index stamped by markYields()
+    // --- end E1 ---
+    // --- E2a --- trip clock (stable shape; stamped in trySpawn, read by recordTrip).
+    spawnTime: 0, // sim time the vehicle entered (set live in trySpawn)
+    _freeFlowTime: 0, // accumulated free-flow travel time (delay = tripTime - this)
+    // --- end E2a ---
     v: 0,
     nextConn: null, // cached next connector for the current real lane
     exitEdgeId: null, // routed exit (null in onNetwork mode)
@@ -117,3 +126,32 @@ export function createVehicle(rng, lane, type) {
     },
   };
 }
+
+// --- E1 ---
+/**
+ * Create an emergency vehicle (V5 E1). NOT a 7th type: it reuses an existing
+ * mesh slot (CONFIG.emergency.meshType, default 'suv') so it renders through the
+ * untouched 6-InstancedMesh system, flagged isEmergency=true. Built on top of
+ * createVehicle (identical stable shape — the sim hot loops never branch on
+ * shape) then overlaid with the emergency profile: faster v0, sharper accel,
+ * tighter following gap (idm.T/s0 × gapFactor), and a white body. The siren is a
+ * separate overlay InstancedMesh in vehiclesMesh.js (it never touches the body).
+ */
+export function createAmbulance(rng, lane) {
+  const em = CONFIG.emergency;
+  const meshType = CONFIG.vehicleTypes[em.meshType] ? em.meshType : 'suv';
+  const veh = createVehicle(rng, lane, meshType); // valid typeIndex + stable shape
+  veh.isEmergency = true;
+  veh.isMicro = false; // never serve bus stops, regardless of the reused slot
+  // White ambulance body (per-instance color; siren overlay glows on top).
+  veh.color.r = em.color.r;
+  veh.color.g = em.color.g;
+  veh.color.b = em.color.b;
+  // Faster + more aggressive than the base slot; tighter car-following gap.
+  veh.v0Factor = em.v0Factor;
+  veh.idm.a = CONFIG.idm.a * em.accelFactor;
+  veh.idm.T = CONFIG.idm.T * em.gapFactor;
+  veh.idm.s0 = CONFIG.idm.s0 * em.gapFactor;
+  return veh;
+}
+// --- end E1 ---

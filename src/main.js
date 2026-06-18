@@ -41,8 +41,27 @@ import { createSearch, showToast } from './ui/search.js';
 import { createShare, bootShare } from './ui/share.js';
 import { createTour } from './ui/tour.js';
 // --- end D3 ---
+// --- E2a --- panel de estadísticas + exportación CSV.
+import { createStats } from './ui/stats.js';
+// --- end E2a ---
+// --- E2b --- grabador de replay + barra de repetición. El grabador (ring) vive
+// dentro de la simulación (sim/replay.js, creado por createSimulation); aquí solo
+// importamos la barra de repetición (UI app-owned).
+import { createReplayUI } from './ui/replayUI.js';
+// --- end E2b ---
 
 window.__SIM__ = { ready: false };
+
+// --- E2b --- replay render-source flags (module scope, reset on world swap).
+// While replayMode is ON the sim is HARD-paused AND its recorder is paused, and
+// the RAF frame() calls vehiclesMesh.updateFromReplay(replay, replayScrubT)
+// instead of update(). replayUI is the app-owned scrubber bar; replayPrevPaused
+// remembers the live pause state so EN VIVO restores it exactly.
+let replayMode = false;
+let replayScrubT = 0;
+let replayUI = null;
+let replayPrevPaused = false;
+// --- end E2b ---
 
 const DT = CONFIG.sim.dt;
 
@@ -352,6 +371,46 @@ async function init() {
   const chart = createChart(app);
   const spaceTime = createSpaceTime(app);
   const follow = createFollow(app);
+  // --- E2a --- stats panel + CSV export, wired like `chart` (app-owned,
+  // survives world swaps; reads app.world.sim each update). Stashed on `app`
+  // so __SIM__.exportStats() reaches exportCSV().
+  const stats = createStats(app);
+  app.stats = stats;
+  // --- end E2a ---
+  // --- E2b --- replay recorder + scrubber UI. The recorder lives WITH the sim
+  // (per-world, sim/replay.js); the scrubber bar is app-owned and survives world
+  // swaps. setReplayMode/setReplayScrub drive the module-scope replayMode /
+  // replayScrubT render-source flags + HARD-pause the sim and its recorder.
+  // World swap -> applyReplayMode(false) + sim.replayReset() (see rebuildWorld).
+  function applyReplayMode(on) {
+    on = !!on;
+    if (on === replayMode) {
+      if (on) app.world?.sim?.setReplayRecording?.(false); // keep enforced
+      return;
+    }
+    const sim = app.world?.sim;
+    if (on) {
+      replayPrevPaused = sim ? sim.paused : false; // remember the live pause state
+      replayMode = true;
+      sim?.setPaused?.(true); // HARD-pause the sim
+      sim?.setReplayRecording?.(false); // pause recording (clean live-only ring)
+    } else {
+      replayMode = false;
+      sim?.setReplayRecording?.(true); // resume recording
+      sim?.setPaused?.(replayPrevPaused); // restore the exact live pause state
+    }
+  }
+  function applyReplayScrub(t) {
+    replayScrubT = +t || 0;
+  }
+  app._applyReplayMode = applyReplayMode; // reached by the __SIM__ E2b hooks
+  app._applyReplayScrub = applyReplayScrub;
+  replayUI = createReplayUI(app, {
+    setReplayMode: applyReplayMode,
+    setReplayScrub: applyReplayScrub,
+    isReplayMode: () => replayMode,
+  });
+  // --- end E2b ---
   // --- C1 --- picking opts: obras mode raycasts the road ribbon instead of
   // vehicles. The extra arg is ignored by the legacy createPicking signature;
   // agent C1 extends createPicking(view, getVehiclesMesh, onPick, opts) and
@@ -443,6 +502,15 @@ async function init() {
     if (!networkComplete(network2)) return 'incomplete';
 
     follow.stop();
+    // --- E2b --- world swap: force EN VIVO + clear the replay ring so the new
+    // world never scrubs into stale frames. Exit replayMode (restores the live
+    // pause state on the OLD sim), clear the old recorder, and reset the UI bar.
+    // The new world ships with a fresh empty ring; the UI also re-pins to the
+    // live edge when it detects the sim swap in its own update().
+    applyReplayMode(false);
+    app.world?.sim?.replayReset?.();
+    replayUI?.reset();
+    // --- end E2b ---
     const old = app.world;
     app.world = null; // RAF idles during the swap
     acc = 0;
@@ -670,6 +738,88 @@ async function init() {
       return app.tour ?? null; // D3 assigns app.tour = createTour(app, gui)
     },
     // --- end D3 ---
+
+    // --- E1 --- ambulancia hooks (no-ops until sim.callAmbulance lands).
+    //   callAmbulance() -> spawns one ambulance, returns its id (or null at cap)
+    //   ambulances      -> { count, list:[{id,segId,s,v}] } | null
+    //   yieldingCount   -> live count of vehicles ceding to an ambulance
+    //   sirenCount      -> vehiclesMesh siren instances last frame (e2e hook)
+    callAmbulance: () => app.world?.sim.callAmbulance?.() ?? null,
+    get ambulances() {
+      return app.world?.sim.ambulances ?? null;
+    },
+    get yieldingCount() {
+      return app.world?.sim.yieldingCount ?? 0;
+    },
+    get sirenCount() {
+      return app.world?.vehiclesMesh.sirenCount ?? 0;
+    },
+    // --- end E1 ---
+
+    // --- E2a --- estadísticas + CSV hooks (no-ops until createStats/sim land).
+    //   tripStats      -> {viajesCompletados, tiempoMedioViaje, demoraMedia,
+    //                      demoraTotal, velocidadMedia, rendimiento} | null
+    //   metricsHistory -> the ring (or its sample count) for the chart/CSV
+    //   exportStats()  -> the metricas-globales CSV as a string (e2e hook)
+    get tripStats() {
+      return app.world?.sim.tripStats ?? null;
+    },
+    get metricsHistory() {
+      return app.world?.sim.metricsHistory ?? null;
+    },
+    exportStats: () => app.stats?.exportCSV?.() ?? null,
+    // --- end E2a ---
+
+    // --- E2b --- replay hooks (no-ops until replay.js + the RAF swap land).
+    //   replay          -> {recording, mode, windowS, frameCount, scrubT} | null
+    //   setReplayMode(b)-> enter/exit scrubbing (hard-pause + render from ring)
+    //   setReplayScrub(tSeconds) -> set the scrub position (drives positions)
+    //   replayFrameCount-> frames captured so far (e2e hook)
+    // Agent E2b wires these to the module-scope replayMode/replayScrubT flags
+    // and the recorder; they READ/DRIVE the RAF render-source swap below.
+    get replay() {
+      const r = app.world?.sim.replay;
+      if (!r) return null;
+      return {
+        recording: r.recording, // live recording active (false while scrubbing)
+        mode: replayMode, // true while rendering from the ring
+        windowS: r.windowS, // rewindable window (s)
+        frameCount: r.frameCount, // ring capacity (constant)
+        written: r.written, // frames captured so far
+        scrubT: replayScrubT, // current scrub sim-time
+        minTime: r.minTime(), // oldest sim-time in the ring (-1 empty)
+        maxTime: r.maxTime(), // newest sim-time in the ring (-1 empty)
+      };
+    },
+    setReplayMode: (b) => app._applyReplayMode?.(b),
+    setReplayScrub: (t) => app._applyReplayScrub?.(t),
+    get replayFrameCount() {
+      // Frames captured so far (e2e hook) — NOT the ring capacity.
+      return app.world?.sim.replay?.written ?? 0;
+    },
+    /**
+     * Sum of the live vehicle instance-matrix translation components (e2e hook).
+     * Scrubbing to two different sim-times yields two different signatures —
+     * proves the scrubber actually drives the rendered instance matrices. Read
+     * AFTER a RAF frame has rendered the current scrubT.
+     */
+    replayInstanceSignature() {
+      const vm = app.world?.vehiclesMesh;
+      if (!vm) return 0;
+      let sig = 0;
+      for (let k = 0; k < vm.meshes.length; k++) {
+        const m = vm.meshes[k];
+        const arr = m.instanceMatrix.array;
+        const n = m.count;
+        for (let i = 0; i < n; i++) {
+          const o = i * 16;
+          // translation row (12,13,14) — position of each instance
+          sig += arr[o + 12] * 0.5 + arr[o + 13] * 0.25 + arr[o + 14] * 0.125;
+        }
+      }
+      return sig;
+    },
+    // --- end E2b ---
   };
 
   // --- D3 (init:end) ---
@@ -710,7 +860,17 @@ async function init() {
       app.environment?.update?.(sim, wallDt, app.view.camera);
       const nightFactor = app.environment?.state?.headlightFactor ?? 0;
       // --- end C2 ---
-      world.vehiclesMesh.update(alpha, nightFactor);
+      // --- E2b: RAF render-source swap ---
+      // While replayMode is ON, render vehicles FROM the replay ring at the
+      // scrubbed sim-time instead of the live sim (the sim is already hard-paused
+      // so sim.step never advanced this frame; environment, lamps, gondolas and
+      // the heatmap keep rendering live). Otherwise take the live update() path.
+      if (replayMode) {
+        world.vehiclesMesh.updateFromReplay(sim.replay, replayScrubT);
+      } else {
+        world.vehiclesMesh.update(alpha, nightFactor);
+      }
+      // --- end E2b: RAF render-source swap ---
       // --- C1 --- cones refresh on closureVersion change + hazard blink.
       world.worksMesh?.update?.(sim.time);
       // --- end C1 ---
@@ -726,7 +886,14 @@ async function init() {
       world.streetNames.update(app.view.camera); // ~5 Hz gate inside (V2.1 B)
       hud.update();
       chart.update();
+      // --- E2a --- estadísticas panel refresh (HUD cadence; internal gate on
+      // metrics.global.time so the DOM only writes on a new global sample).
+      stats.update();
+      // --- end E2a ---
       spaceTime.update();
+      // --- E2b --- scrubber bar tick (REC indicator + playback advance).
+      replayUI?.update(wallDt);
+      // --- end E2b ---
       follow.update(alpha, wallDt);
     }
     if (!follow.active) app.view.controls.update();

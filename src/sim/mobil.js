@@ -54,8 +54,14 @@ function evaluateLane(veh, target, ctx, mandatory) {
   const nb = neighborsAt(target, sT);
 
   const distToEnd = lane.length - veh.s;
-  const safeDecel =
-    mandatory && distToEnd < cfg.mandatoryRelaxDistM ? cfg.mandatorySafeDecel : cfg.safeDecel;
+  // E1: a curb-yield change (ctx.yield) reuses the mandatory path entirely but
+  // with the relaxed emergency.yieldLcSafeDecel bound so civilians cede the lane
+  // even when the curb lane is busy (the ambulance needs the gap NOW).
+  const safeDecel = ctx.yield
+    ? CONFIG.emergency?.yieldLcSafeDecel ?? cfg.mandatorySafeDecel
+    : mandatory && distToEnd < cfg.mandatoryRelaxDistM
+      ? cfg.mandatorySafeDecel
+      : cfg.safeDecel;
 
   // Physical room.
   let gapLead = Infinity;
@@ -71,6 +77,10 @@ function evaluateLane(veh, target, ctx, mandatory) {
     if (gapFol < 0.5) return -Infinity;
   }
 
+  // E1: a yield change is forced just like a mandatory one — incentive is
+  // overridden, change as soon as safety (relaxed bound above) passes.
+  const forced = mandatory || ctx.yield;
+
   const v0T = target.speedMs * veh.v0Factor;
   const aNew = idmAccel(veh.v, v0T, gapLead, veh.v - leadV, veh.idm) + ctx.aGrade;
 
@@ -81,7 +91,7 @@ function evaluateLane(veh, target, ctx, mandatory) {
     const fv0 = target.speedMs * f.v0Factor;
     const aFolAfter = idmAccel(f.v, fv0, gapFol, f.v - veh.v, f.idm);
     if (aFolAfter < safeDecel) return -Infinity;
-    if (!mandatory) {
+    if (!forced) {
       const gapBefore = nb.leader
         ? nb.leader.s - nb.leader.len / 2 - f.s - f.len / 2
         : Infinity;
@@ -89,7 +99,7 @@ function evaluateLane(veh, target, ctx, mandatory) {
       folLoss = aFolBefore - aFolAfter; // positive = follower is worse off
     }
   }
-  if (mandatory) return 0; // safety passed; incentive is overridden
+  if (forced) return 0; // safety passed; incentive is overridden
 
   // Old follower: gain when we leave (inherits our leader).
   let oldGain = 0;
@@ -121,6 +131,15 @@ function evaluateLane(veh, target, ctx, mandatory) {
 export function mobilDecision(veh, ctx) {
   const lanes = ctx.edge.lanes;
   const idx = veh.seg.index;
+
+  // E1: a curb-yield change targets the next lane TOWARD the curb (index+1 =
+  // rightmost direction) via the forced path. The caller only sets ctx.yield
+  // when veh.mandatory === 0 and a curb-ward lane exists.
+  if (ctx.yield) {
+    const ti = idx + 1;
+    if (ti >= lanes.length) return null;
+    return evaluateLane(veh, lanes[ti], ctx, true) > -Infinity ? lanes[ti] : null;
+  }
 
   if (veh.mandatory !== 0) {
     const ti = idx + veh.mandatory;

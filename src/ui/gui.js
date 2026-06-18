@@ -144,6 +144,27 @@ export function createGui(app) {
   // swap) — intentionally NOTHING about them in applyTo().
   // --- end C1 ---
 
+  // --- E1 --- «Emergencias» (ambulancia). The button is a ?.-guarded no-op
+  // until sim.callAmbulance + __SIM__.callAmbulance land; agent E1 fills ONLY
+  // inside this block (button «Llamar ambulancia 🚑» -> __SIM__.callAmbulance(),
+  // optional concurrent/yield read-outs). Per-network runtime state — like
+  // obras, NOTHING about ambulances goes in applyTo().
+  const fEmergencias = gui.addFolder('Emergencias');
+  fEmergencias
+    .add(
+      {
+        ambulancia() {
+          // E1: spawns an ambulance that ignores red lights with caution and
+          // routes toward the last incident; others cede toward the curb.
+          window.__SIM__?.callAmbulance?.();
+        },
+      },
+      'ambulancia'
+    )
+    .name('Llamar ambulancia 🚑');
+  fEmergencias.close();
+  // --- end E1 ---
+
   // --- C2 --- «Clima y hora» (controls are ?.-guarded no-ops until
   // app.environment lands; agent C2 fills ONLY inside this block).
   const fClima = gui.addFolder('Clima y hora');

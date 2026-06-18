@@ -19,13 +19,18 @@
 import { CONFIG } from '../config.js';
 import { clamp } from '../util/math2d.js';
 import { createRng } from '../util/rng.js';
-import { createVehicle, pickVehicleType } from './vehicle.js';
+import { createVehicle, createAmbulance, pickVehicleType } from './vehicle.js';
 import { idmAccel } from './idm.js';
 import { signalState, setSimTime } from './signalsRuntime.js';
 import { mobilDecision } from './mobil.js';
 import { createDetectors } from './detectors.js';
 import { TURN_PRIORITY } from '../network/connectors.js';
 import { createRoutingBuilder } from '../network/routing.js';
+// --- E2b: replay recorder import ---
+// Owned by the sim so the ring is per-world (reset on swap) and fed from the
+// step-5 sampling marker. main.js reads it via the `replay` public hook.
+import { createReplayRecorder } from './replay.js';
+// --- end E2b: replay recorder import ---
 
 const HARD_TRIP_CAP_M = 8000; // safety net against pathological loops
 const MAX_SPAWN_QUEUE = 20; // arrivals kept waiting per entry lane
@@ -41,10 +46,25 @@ export function createSimulation(network) {
 
   const simCfg = CONFIG.sim;
   const mobilCfg = simCfg.mobil;
+  // --- E1 --- emergency state (V5). emCfg falls back to off-safe defaults so
+  // the module stays green if the config block is missing (busCfg pattern).
+  const emCfg = CONFIG.emergency ?? {
+    enabled: false, meshType: 'suv', maxConcurrent: 3, signalSlowdownMs: 6,
+    yieldRadiusM: 60, yieldLcSafeDecel: -7, yieldEdgeOffsetM: 1.2, yieldSlowFactor: 0.55,
+    routeToIncident: true,
+  };
+  let ambulanceCount = 0; // live ambulances (capped at emCfg.maxConcurrent)
+  let yieldingCount = 0; // civilians with an active _yielding lease this step (debug)
+  // --- end E1 ---
   let routing = network.routing; // C1: reassigned by the closure rebuild (D2)
   const hasRouting =
     network.spawnMode === 'entries' && routing.tables && routing.tables.size > 0;
   const detectors = createDetectors(network);
+  // --- E2b: replay recorder instance ---
+  // Per-world flat ring (preallocated once in createReplayRecorder). Fed from
+  // the step-5 sampling marker (sim-time gated); paused while replayMode is ON.
+  const replayRecorder = createReplayRecorder({ vehicles });
+  // --- end E2b: replay recorder instance ---
 
   // ---- Closures & incidents state (V3 C1) ----
   // ?? fallbacks keep the module green if config blocks are absent (busCfg pattern).
@@ -60,6 +80,118 @@ export function createSimulation(network) {
   let closureVersion = 0; // bumped on every closure/incident change (worksMesh polls)
   let routingVersion = 0; // bumped on every routing table swap
   let pendingRoutingBuilder = null; // chunked rebuild in flight (double buffer)
+
+  // ---- Stats: trip accumulators + metrics history ring (V5 E2a) ----
+  // statsCfg fallback keeps the module green if the config block is absent
+  // (busCfg/closuresCfg pattern). All accumulators are plain numbers /
+  // preallocated typed arrays — zero per-frame allocation, stable shapes.
+  const statsCfg = CONFIG.stats ?? {
+    completionsWindowS: 60,
+    metricsHistoryCap: 900,
+    metricsSampleS: 2.0,
+    tripLogCap: 2000,
+    bom: '﻿',
+  };
+  const tripAcc = {
+    completed: 0, // total exit-despawned civilian trips
+    sumTripTime: 0, // Σ tripTime (s) — mean trip time
+    sumDelay: 0, // Σ delay (s) — mean + total delay
+    sumDist: 0, // Σ trip distance (m)
+    sumSpeed: 0, // Σ per-trip mean speed (m/s) — mean of trip means
+  };
+  // Completion ring for "rendimiento" (throughput, veh/min over a rolling
+  // window): timestamps of recent completions, overwrite-oldest. Capacity is
+  // generous (window/headway worst case) — sized once, zero-alloc thereafter.
+  const COMPLETION_RING_CAP = 4096;
+  const completionTimes = new Float64Array(COMPLETION_RING_CAP);
+  let completionHead = 0;
+  let completionCount = 0;
+
+  // Capped trip log for viajes.csv: parallel typed arrays (no object churn).
+  const tripLogCap = statsCfg.tripLogCap;
+  const tripLog = {
+    id: new Float64Array(tripLogCap),
+    spawnT: new Float32Array(tripLogCap),
+    exitT: new Float32Array(tripLogCap),
+    tripTime: new Float32Array(tripLogCap),
+    delay: new Float32Array(tripLogCap),
+    dist: new Float32Array(tripLogCap),
+    head: 0,
+    count: 0,
+  };
+
+  // metricsHistory ring: preallocated Float32Arrays of global metrics samples,
+  // sim-time gated (~statsCfg.metricsSampleS). Capped (~30 min). Zero-alloc.
+  const mhCap = statsCfg.metricsHistoryCap;
+  const metricsHistory = {
+    t: new Float32Array(mhCap),
+    vehicles: new Float32Array(mhCap),
+    meanSpeedKmh: new Float32Array(mhCap),
+    flowVehHLane: new Float32Array(mhCap),
+    densityVehKm: new Float32Array(mhCap),
+    head: 0, // next write slot
+    count: 0, // valid samples (<= cap)
+    cap: mhCap,
+  };
+  let nextMetricsSampleT = 0; // sim-time gate for the next ring sample
+
+  /**
+   * Fold a finished trip into tripStats + the capped trip log (V5 E2a). Called
+   * from removeVehicle on the exit-despawn path. Excludes emergencies (event-
+   * spawned, not demand) and phantoms (which never reach removeVehicle).
+   * delay = max(0, tripTime - freeFlowTime): time lost to signals/queues vs an
+   * unobstructed run at free speed.
+   */
+  function recordTrip(veh) {
+    if (veh.isEmergency || veh.isPhantom) return;
+    const tripTime = time - veh.spawnTime;
+    if (tripTime <= 0) return; // guard against a degenerate same-step despawn
+    const delay = Math.max(0, tripTime - veh._freeFlowTime);
+    const dist = veh.tripDist;
+    tripAcc.completed++;
+    tripAcc.sumTripTime += tripTime;
+    tripAcc.sumDelay += delay;
+    tripAcc.sumDist += dist;
+    tripAcc.sumSpeed += dist / tripTime; // this trip's mean speed (m/s)
+    // Completion ring (throughput window).
+    completionTimes[completionHead] = time;
+    completionHead = (completionHead + 1) % COMPLETION_RING_CAP;
+    if (completionCount < COMPLETION_RING_CAP) completionCount++;
+    // Capped trip log (overwrite-oldest).
+    const h = tripLog.head;
+    tripLog.id[h] = veh.id;
+    tripLog.spawnT[h] = veh.spawnTime;
+    tripLog.exitT[h] = time;
+    tripLog.tripTime[h] = tripTime;
+    tripLog.delay[h] = delay;
+    tripLog.dist[h] = dist;
+    tripLog.head = (h + 1) % tripLogCap;
+    if (tripLog.count < tripLogCap) tripLog.count++;
+  }
+
+  /** Live completions within the rolling rendimiento window (veh count). */
+  function recentCompletions() {
+    const tMin = time - statsCfg.completionsWindowS;
+    let n = 0;
+    for (let j = 0; j < completionCount; j++) {
+      const idx = (completionHead - 1 - j + COMPLETION_RING_CAP * 2) % COMPLETION_RING_CAP;
+      if (completionTimes[idx] < tMin) break; // newest-first, time-ordered
+      n++;
+    }
+    return n;
+  }
+
+  /** Push one global-metrics sample into the ring (sim-time gated by caller). */
+  function pushMetricsSample(g) {
+    const h = metricsHistory.head;
+    metricsHistory.t[h] = g.time;
+    metricsHistory.vehicles[h] = g.vehicles;
+    metricsHistory.meanSpeedKmh[h] = g.meanSpeedKmh;
+    metricsHistory.flowVehHLane[h] = g.flowVehHLane;
+    metricsHistory.densityVehKm[h] = g.densityVehKm;
+    metricsHistory.head = (h + 1) % mhCap;
+    if (metricsHistory.count < mhCap) metricsHistory.count++;
+  }
 
   // ---- One-time wiring (stable object shapes for the hot loops) ----
   for (const e of network.edges.values()) {
@@ -134,6 +266,19 @@ export function createSimulation(network) {
 
   function removeVehicle(veh) {
     veh._gone = true;
+    // --- E1: removeVehicle exit ---
+    // Free an ambulance slot under emergency.maxConcurrent (incremented in
+    // spawnAmbulance). Civilians never touch the counter.
+    if (veh.isEmergency && ambulanceCount > 0) ambulanceCount--;
+    // --- end E1: removeVehicle exit ---
+    // --- E2a: recordTrip exit ---
+    // Single exit-despawn path (transition() despawns here on the exit stub /
+    // dead end / trip cap). Fold tripTime = time - spawnTime and
+    // delay = max(0, tripTime - _freeFlowTime) into tripStats + the trip log.
+    // recordTrip itself skips emergencies/phantoms (the latter never reach here
+    // anyway — they expire via removeIncidentAt).
+    recordTrip(veh);
+    // --- end E2a: recordTrip exit ---
     removeFromSeg(veh);
     const i = vehicles.indexOf(veh);
     if (i >= 0) {
@@ -606,7 +751,16 @@ export function createSimulation(network) {
       veh._a = Math.max(-5, -veh.v / simCfg.dt);
       return veh._a;
     }
-    const v0 = veh.seg.speedMs * veh.v0Factor;
+    let v0 = veh.seg.speedMs * veh.v0Factor;
+    // --- E1: yield slowdown ---
+    // A civilian with an active yield lease (stamped by markYields) eases off:
+    // its desired speed drops by yieldSlowFactor and it drifts toward the curb
+    // (lcLat nudge below). On a multi-lane edge the mandatory curb change in
+    // maybeLaneChange does the real work; the slowdown opens the gap meanwhile.
+    if (veh._yielding > time && !veh.isEmergency) {
+      v0 *= emCfg.yieldSlowFactor;
+    }
+    // --- end E1: yield slowdown ---
     let gap = Infinity;
     let dv = 0;
     if (leader) {
@@ -641,7 +795,27 @@ export function createSimulation(network) {
 
     if (!veh.seg.isConnector && veh.nextConn) {
       const distToStop = veh.seg.length - veh.s - veh.len / 2;
-      if (shouldStopAtSignal(veh, distToStop)) {
+      // --- E1: decide signal branch ---
+      // An ambulance rolls THROUGH a red (and creeps past a blocked conflict)
+      // instead of hard-stopping: near the stop line its desired speed is capped
+      // to emergency.signalSlowdownMs via a FREE-ROAD IDM term (no virtual
+      // obstacle), so it settles at the creep speed and never reaches v=0. It
+      // still car-follows its leader through the restrictive min() above (aCar),
+      // so it can't rear-end the queue ahead. Civilians take the legacy branch.
+      if (veh.isEmergency) {
+        const redOrYellow = shouldStopAtSignal(veh, distToStop);
+        const conflictHere =
+          veh.nextConn.conflictRefs.length &&
+          distToStop < simCfg.conflictEvalDistM &&
+          conflictBlocked(veh);
+        if ((redOrYellow || conflictHere) && distToStop < simCfg.conflictEvalDistM) {
+          // Free-road creep cap (Infinity gap = no obstacle, just the v0 cap).
+          const aCreep = idmAccel(veh.v, emCfg.signalSlowdownMs, Infinity, 0, veh.idm);
+          if (aCreep < a) a = aCreep;
+          // NOT _blocked: the ambulance keeps rolling, so the deadlock breaker
+          // and the "held at standstill" brake-light logic never fire on it.
+        }
+      } else if (shouldStopAtSignal(veh, distToStop)) {
         const aStop = idmAccel(veh.v, v0, Math.max(distToStop, 0.05), veh.v, veh.idm);
         if (aStop < a) a = aStop; // most restrictive, never average
       } else if (
@@ -653,6 +827,7 @@ export function createSimulation(network) {
         const aStop = idmAccel(veh.v, v0, Math.max(distToStop, 0.05), veh.v, veh.idm);
         if (aStop < a) a = aStop;
       }
+      // --- end E1: decide signal branch ---
       // Mandatory-change creep: virtual obstacle just before the lane end so
       // the vehicle waits for a gap (deadlock breaker gives up after 8 s).
       if (veh.mandatory !== 0 && distToStop < mobilCfg.mandatoryRelaxDistM) {
@@ -696,7 +871,9 @@ export function createSimulation(network) {
   }
 
   // ---- MOBIL hook (§2.5) ----
-  const _mctx = { edge: null, aSelf: 0, aGrade: 0, leader: null, follower: null };
+  // `yield` (E1): when set, mobil.js treats the change like a mandatory one but
+  // with the relaxed emergency.yieldLcSafeDecel bound and a curb-ward target.
+  const _mctx = { edge: null, aSelf: 0, aGrade: 0, leader: null, follower: null, yield: false };
 
   function maybeLaneChange(veh, seg, aCar, leader, follower) {
     if (time < veh.lcCooldownUntil) return;
@@ -710,7 +887,20 @@ export function createSimulation(network) {
     }
     const edge = seg._edge;
     if (edge.lanes.length < 2) return;
-    if (veh.mandatory === 0 && veh.s >= seg.length - mobilCfg.minDistToLaneEndM) return;
+    // --- E1: yield curb change ---
+    // A civilian under an active yield lease that is NOT already on the curb
+    // lane makes a forced curb-ward change via mobil's mandatory path with the
+    // relaxed yieldLcSafeDecel bound. Real route-mandatory changes take priority
+    // (an ambulance must not derail traffic's actual route obligations).
+    const yielding =
+      veh._yielding > time &&
+      !veh.isEmergency &&
+      veh.mandatory === 0 &&
+      seg.index < edge.lanes.length - 1; // room to move toward the curb
+    _mctx.yield = yielding;
+    // --- end E1: yield curb change ---
+    if (!yielding && veh.mandatory === 0 && veh.s >= seg.length - mobilCfg.minDistToLaneEndM)
+      return;
     _mctx.edge = edge;
     _mctx.aSelf = aCar;
     _mctx.aGrade = veh._aGrade; // sibling lanes share the longitudinal profile (F1)
@@ -772,13 +962,17 @@ export function createSimulation(network) {
       removeVehicle(veh);
       return false;
     }
+    // E1: an ambulance rolls THROUGH a red / blocked conflict at the lane end
+    // (its decide() creep keeps v > 0 — pinning v=0 here would contradict the
+    // "never fully stops" contract). It still enters the connector at its low
+    // creep speed and car-follows whatever is already on it. Civilians hold.
     const sig = signalFor(veh.nextConn);
-    if (sig && signalState(sig, veh.nextConn.signalGroup, time) === 'red') {
+    if (!veh.isEmergency && sig && signalState(sig, veh.nextConn.signalGroup, time) === 'red') {
       veh.s = veh.seg.length; // hold at stop line (numeric overshoot)
       veh.v = 0;
       return false;
     }
-    if (veh.nextConn.conflictRefs.length && conflictBlocked(veh)) {
+    if (!veh.isEmergency && veh.nextConn.conflictRefs.length && conflictBlocked(veh)) {
       veh.s = veh.seg.length;
       veh.v = 0;
       veh._blocked = true;
@@ -811,12 +1005,164 @@ export function createSimulation(network) {
       veh.tripMax = Math.max(300, rng.exp(simCfg.spawn.tripMeanKm * 1000));
     }
     if (hasRouting) veh.exitEdgeId = routing.pickExit(rng, lane.edgeId);
+    // --- E2a: trySpawn spawnTime ---
+    // Stamp the trip clock so recordTrip() can compute tripTime = time -
+    // spawnTime on exit-despawn, and reset the free-flow accumulator (the
+    // integrate loop adds ds/seg.speedMs each step). Both are stable factory
+    // fields (vehicle.js: spawnTime:0/_freeFlowTime:0); written here at the real
+    // spawn instant. `??=` keeps this green even before the E1 factory fields
+    // land (parallel build) without changing the hot-loop shape afterwards.
+    veh.spawnTime = time;
+    veh._freeFlowTime = 0;
+    // --- end E2a: trySpawn spawnTime ---
     enterSegment(veh, lane, veh.len / 2);
     veh.prevSeg = veh.seg; // interpolation snapshot starts at the spawn pose
     veh.prevS = veh.s;
     vehicles.push(veh);
     return true;
   }
+
+  // --- E1: spawnAmbulance ---
+  /**
+   * Pick an exit so the routed path heads TOWARD the latest incident (V5 E1).
+   * The reverse-Dijkstra tables are keyed by EXIT edge; the incident edge is
+   * rarely an exit itself, so we choose the exit DOWNSTREAM of the incident with
+   * the smallest remaining distance (the incident sits "on the way" to it).
+   * Falls back to the standard weighted pickExit when nothing routes there.
+   */
+  function pickExitTowardIncident(fromEdgeId) {
+    if (!hasRouting) return null;
+    if (!incidents.length) return routing.pickExit(rng, fromEdgeId);
+    const incEdgeId = incidents[incidents.length - 1].lane.edgeId;
+    let bestExit = null;
+    let bestDist = Infinity;
+    for (const [exitEdgeId, table] of routing.tables) {
+      // Both the spawn edge and the incident edge must route to this exit, so
+      // the spawn->exit path passes through the incident's region.
+      if (!table.next.has(fromEdgeId)) continue;
+      const d = table.distM.get(incEdgeId);
+      if (d === undefined) continue;
+      if (d < bestDist) {
+        bestDist = d;
+        bestExit = exitEdgeId;
+      }
+    }
+    return bestExit !== null ? bestExit : routing.pickExit(rng, fromEdgeId);
+  }
+
+  /**
+   * Spawn one emergency vehicle (V5 E1). Event-driven (NOT demand): never goes
+   * through trySpawn/pickVehicleType. Bails at emergency.maxConcurrent. Picks
+   * the weighted entry lane with the most room at the head, builds an ambulance
+   * (createAmbulance: reused mesh slot + isEmergency + white + faster), routes it
+   * toward the latest incident when routeToIncident is on, and joins vehicles[].
+   * Returns the new vehicle id, or null when capped / no room anywhere.
+   */
+  function spawnAmbulance(opts) {
+    if (!emCfg.enabled) return null;
+    if (ambulanceCount >= emCfg.maxConcurrent) return null;
+    if (!spawnLanes.length) return null;
+    // Choose the open entry lane with the largest head gap (so the fast
+    // ambulance has room to launch); skip closed entries.
+    let best = null;
+    let bestFree = -Infinity;
+    for (let i = 0; i < spawnLanes.length; i++) {
+      const lane = spawnLanes[i].lane;
+      if (lane._edge._closed) continue;
+      const arr = lane.vehicles;
+      let free = lane.length;
+      if (arr.length) {
+        const rear = arr[arr.length - 1];
+        free = rear.s - rear.len / 2 - emLenHalf; // bumper gap ahead of s=len/2
+      }
+      // Weight by the entry share so busier corridors are still preferred.
+      const score = free + spawnLanes[i].share * 50;
+      if (free > 1 && score > bestFree) {
+        bestFree = score;
+        best = lane;
+      }
+    }
+    if (best === null) return null;
+    const veh = createAmbulance(rng, best);
+    veh.v = Math.min(best.speedMs, Math.max(2, bestFree / veh.idm.T));
+    if (network.spawnMode === 'onNetwork') {
+      veh.tripMax = Math.max(300, rng.exp(simCfg.spawn.tripMeanKm * 1000));
+    }
+    if (hasRouting) {
+      veh.exitEdgeId =
+        emCfg.routeToIncident
+          ? pickExitTowardIncident(best.edgeId)
+          : routing.pickExit(rng, best.edgeId);
+    }
+    veh.spawnTime = time; // E2a trip clock (shared exit-despawn path)
+    veh._freeFlowTime = 0;
+    enterSegment(veh, best, veh.len / 2);
+    veh.prevSeg = veh.seg;
+    veh.prevS = veh.s;
+    vehicles.push(veh);
+    ambulanceCount++;
+    void opts; // reserved (e.g. forced laneId) — weighted pick covers the GUI button
+    return veh.id;
+  }
+  const emLenHalf = (CONFIG.vehicleTypes[emCfg.meshType]?.lengthM ?? 4.7) / 2;
+
+  /**
+   * markYields() pre-pass (V5 E1, zero-alloc). For each LIVE ambulance, walk its
+   * near-term path (the lookaheadLeader hop pattern) up to emergency.yieldRadiusM
+   * and stamp every non-emergency vehicle ahead with a short sim-time lease
+   * (_yielding = time + 0.5, refreshed each step) and _yieldDir = curb (rightmost
+   * lane index of that vehicle's edge). The decide loop reads the slowdown; the
+   * MOBIL hook reads the lease to force a curb-ward mandatory change. The short
+   * lease auto-expires so civilians release the instant the ambulance passes —
+   * preventing gridlock. No-op while no ambulance is live.
+   */
+  function markYields() {
+    yieldingCount = 0;
+    if (ambulanceCount <= 0) return;
+    const lease = time + 0.5;
+    const radius = emCfg.yieldRadiusM;
+    for (let i = 0; i < vehicles.length; i++) {
+      const amb = vehicles[i];
+      if (!amb.isEmergency) continue;
+      // Walk the path ahead: current seg from amb.s, then hop through the next
+      // connector/lane chain until the cumulative distance exceeds the radius.
+      let seg = amb.seg;
+      let fromS = amb.s;
+      let dist = 0;
+      let hops = 0;
+      while (seg && dist < radius && hops < 4) {
+        const arr = seg.vehicles;
+        for (let j = 0; j < arr.length; j++) {
+          const other = arr[j];
+          if (other === amb || other.isEmergency || other.isPhantom) continue;
+          if (other.s <= fromS) continue; // only vehicles AHEAD on this seg
+          if (dist + (other.s - fromS) > radius) continue;
+          other._yielding = lease;
+          // Curb = rightmost lane index of this vehicle's edge (lanes 0..N-1,
+          // N-1 = curb). Connectors have no _edge: leave _yieldDir at 0.
+          other._yieldDir = seg.isConnector ? 0 : seg._edge.lanes.length - 1;
+        }
+        dist += seg.length - fromS;
+        // Hop to the next segment along the ambulance's route.
+        if (seg.isConnector) {
+          seg = network.lanes.get(seg.toLaneId);
+        } else {
+          seg = amb.nextConn && seg === amb.seg ? amb.nextConn : null;
+          // Beyond the first lane we can't cheaply know the route; one hop via
+          // the cached nextConn covers the common "approaching the junction"
+          // case where yielding matters most.
+        }
+        fromS = 0;
+        hops++;
+      }
+    }
+    // Count active leases for the debug getter (cheap: one pass).
+    for (let i = 0; i < vehicles.length; i++) {
+      const v = vehicles[i];
+      if (!v.isEmergency && v._yielding > time) yieldingCount++;
+    }
+  }
+  // --- end E1: spawnAmbulance ---
 
   // ---- Step ----
   const allSegs = [...network.lanes.values(), ...network.connectors.values()];
@@ -846,6 +1192,11 @@ export function createSimulation(network) {
       if (rng.next() < lambda * e.share * dt && e.queued < MAX_SPAWN_QUEUE) e.queued++;
       if (e.queued > 0 && trySpawn(e)) e.queued--;
     }
+    // --- E1: markYields pre-pass ---
+    // Stamp the short curb-yield lease on civilians ahead of each ambulance,
+    // BEFORE the decide loop reads it. Zero-alloc; no-op with no live ambulance.
+    markYields();
+    // --- end E1: markYields pre-pass ---
     // 2) decide + MOBIL decisions (no mutation of lane arrays here).
     for (let si = 0; si < allSegs.length; si++) {
       const seg = allSegs[si];
@@ -882,10 +1233,28 @@ export function createSimulation(network) {
       const sPrev = veh.s;
       veh.s += ds;
       veh.tripDist += ds;
+      // --- E2a: integrate freeFlowTime ---
+      // Accumulate the free-flow reference for delay: the time THIS distance
+      // would have taken at the segment's free speed. recordTrip() later folds
+      // delay = max(0, tripTime - _freeFlowTime). seg.speedMs is always > 0
+      // (lanes inherit edge.speedMs; connectors clamp to >= 1.5) so no guard is
+      // needed. Phantoms never integrate (skipped in the decide loop, v stays 0)
+      // so they never accrue here either.
+      veh._freeFlowTime += ds / veh.seg.speedMs;
+      // --- end E2a: integrate freeFlowTime ---
       const det = veh.seg._det;
       if (det !== null) {
         const sd = veh.seg._detS;
-        if (sPrev < sd && veh.s >= sd) detectors.cross(det, time, veh.v);
+        // --- E2b: step-3 detector cross ---
+        // Agent E2b: this is the per-step detector-cross site referenced by the
+        // scaffold. The replay RECORD call itself lives at the step-5 sampling
+        // marker (sim-time gated, after the clock advances); nothing to add here
+        // unless E2b needs a per-vehicle crossing hook. Leave the cross() call
+        // untouched.
+        // --- end E2b: step-3 detector cross ---
+        // E1: ambulances are event-spawned, not demand — exclude their crossings
+        // from detector flow (FD unaffected by a called ambulance).
+        if (!veh.isEmergency && sPrev < sd && veh.s >= sd) detectors.cross(det, time, veh.v);
       }
       if (veh._blocked && veh.v < simCfg.deadlockSpeedMs) {
         veh.blockT += dt;
@@ -915,6 +1284,26 @@ export function createSimulation(network) {
       if (time >= incidents[i].until) removeIncidentAt(i);
     }
     detectors.update(time, vehicles, network.totalLaneKm);
+    // --- E2b: step-5 sampling ---
+    // Agent E2b: record one replay frame here (END of step, after the clock
+    // advanced and detectors updated). The recorder is SIM-TIME gated
+    // internally (nextRecordT = time + 1/recordHz) so cadence follows sim
+    // speed; it writes sim.vehicles (skip phantoms, include ambulances) into
+    // the next ring frame as [id, typeIndex, x, y, z, heading]. Skip entirely
+    // while replayMode is active (recording paused — main.js HARD-pauses sim).
+    //   e.g. replayRecorder.record(time);
+    replayRecorder.record(time);
+    // --- end E2b: step-5 sampling ---
+    // --- E2a: step-5 metrics sampling ---
+    // Push one metricsHistory ring sample (sim-time gated, ~stats.metricsSampleS)
+    // from detectors.metrics.global. Single owner of the ring — lives here (not
+    // detectors.js) so the gate follows sim time and the sample reads the
+    // just-updated global. Zero-alloc (typed-array writes only), capped.
+    if (time >= nextMetricsSampleT) {
+      nextMetricsSampleT = time + statsCfg.metricsSampleS;
+      pushMetricsSample(detectors.metrics.global);
+    }
+    // --- end E2a: step-5 metrics sampling ---
     lastStepMs = performance.now() - t0;
   }
 
@@ -973,5 +1362,63 @@ export function createSimulation(network) {
     get routingVersion() {
       return routingVersion;
     },
+    // --- E1: sim public hooks ---
+    /** Spawn one ambulance (GUI «Llamar ambulancia»). Returns id, or null at cap. */
+    callAmbulance(opts) {
+      return spawnAmbulance(opts);
+    },
+    /** Live ambulances: {count, list:[{id,segId,s,v}]} (allocates — UI/test only). */
+    get ambulances() {
+      const list = [];
+      for (let i = 0; i < vehicles.length; i++) {
+        const v = vehicles[i];
+        if (v.isEmergency) list.push({ id: v.id, segId: v.seg.id, s: v.s, v: v.v });
+      }
+      return { count: ambulanceCount, list };
+    },
+    /** Civilians with an active curb-yield lease this step (e2e hook). */
+    get yieldingCount() {
+      return yieldingCount;
+    },
+    // --- end E1: sim public hooks ---
+    // --- E2a: sim public hooks ---
+    // Derived trip stats (means from the accumulators) + the metricsHistory ring
+    // + the trip-log accessor for the CSV exporter. The getters allocate a small
+    // result object, but they run on the HUD/export cadence (~2 Hz), NOT in the
+    // per-frame hot loop — consistent with sampleVehicle()/ambulances.
+    get tripStats() {
+      const c = tripAcc.completed;
+      const windowMin = statsCfg.completionsWindowS / 60;
+      return {
+        viajesCompletados: c,
+        tiempoMedioViaje: c > 0 ? tripAcc.sumTripTime / c : 0, // s
+        demoraMedia: c > 0 ? tripAcc.sumDelay / c : 0, // s
+        demoraTotal: tripAcc.sumDelay, // s
+        velocidadMedia: c > 0 ? (tripAcc.sumSpeed / c) * 3.6 : 0, // km/h
+        rendimiento: windowMin > 0 ? recentCompletions() / windowMin : 0, // veh/min
+      };
+    },
+    get metricsHistory() {
+      return metricsHistory;
+    },
+    get tripLog() {
+      return tripLog;
+    },
+    // --- end E2a: sim public hooks ---
+    // --- E2b: sim public hooks ---
+    // Agent E2b: expose the replay recorder so main.js can drive the RAF swap —
+    // e.g. `replay` getter ({recording, frameCount, windowS, ...}),
+    // recordReplay()/replayReset() or a direct recorder handle. The recorder
+    // itself is created in sim/replay.js and fed from the E2b step-5 marker.
+    replay: replayRecorder, // direct recorder handle (record/reset/read API)
+    /** Pause/resume live recording (main.js HARD-pauses while scrubbing). */
+    setReplayRecording(b) {
+      replayRecorder.setRecording(b);
+    },
+    /** Clear the ring on world swap (also re-enables recording). */
+    replayReset() {
+      replayRecorder.reset();
+    },
+    // --- end E2b: sim public hooks ---
   };
 }
