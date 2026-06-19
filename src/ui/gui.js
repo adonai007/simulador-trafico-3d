@@ -26,6 +26,10 @@ export function createGui(app) {
     verConectores: !!CONFIG.debug.showConnectors,
     paradasMicro: CONFIG.busStops.enabled,
     paradaMediaS: CONFIG.busStops.meanDwellS,
+    // --- R1 --- «Ruteo por congestión» checkbox state (default OFF). Drives
+    // sim.setCongestionRouting; carried across world swaps via applyTo.
+    rutaCongestion: CONFIG.routing?.congestionEnabled === true,
+    // --- end R1 ---
     mapaCalor: !!CONFIG.heatmap.enabled,
     nombresCalles: CONFIG.streetNames.enabled !== false,
     // --- C1 --- (obras e incidentes)
@@ -87,6 +91,15 @@ export function createGui(app) {
     .onChange((v) => {
       CONFIG.busStops.meanDwellS = v;
     });
+  // --- R1 --- «Ruteo por congestión» (default OFF). ON: the sim periodically
+  // rebuilds next-hop tables weighting edges by live congestion so traffic
+  // detours around jams; OFF: free-flow routing (unchanged). Per-network sim
+  // state — re-asserted on world swap in applyTo.
+  gui
+    .add(params, 'rutaCongestion')
+    .name('Ruteo por congestión')
+    .onChange((v) => window.__SIM__?.setCongestionRouting?.(v));
+  // --- end R1 ---
 
   // --- Semáforos ---
   const fSig = gui.addFolder('Semáforos');
@@ -270,6 +283,11 @@ export function createGui(app) {
       world.debug.setConnectorsVisible(params.verConectores);
       world.roads.setHeatmap(params.mapaCalor);
       world.streetNames.setVisible(params.nombresCalles);
+      // --- R1 --- re-assert congestion routing on the fresh world's sim (the
+      // flag is per-sim runtime state; default OFF means this is a no-op unless
+      // the user enabled it). Only call when ON to avoid an unnecessary swap.
+      if (params.rutaCongestion) world.sim.setCongestionRouting?.(true);
+      // --- end R1 ---
       // --- C2 --- re-apply weather/hour/wetness/lamps to the fresh world.
       app.environment?.applyTo?.(world);
       // --- end C2 ---

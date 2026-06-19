@@ -660,6 +660,19 @@ async function init() {
     },
     // --- end C1 ---
 
+    // --- R1 --- ruteo sensible a congestión (V6). Default OFF; the setter
+    // mirrors the GUI checkbox and drives the sim flag (which schedules the
+    // periodic congestion-weighted rebuild). congestionRebuilds is the e2e hook
+    // proving a weighted rebuild actually landed.
+    setCongestionRouting: (b) => app.world && app.world.sim.setCongestionRouting?.(b),
+    get congestionRouting() {
+      return app.world?.sim.congestionRouting ?? false;
+    },
+    get congestionRebuilds() {
+      return app.world?.sim.congestionRebuilds ?? 0;
+    },
+    // --- end R1 ---
+
     // --- C2 --- weather & day/night hooks (no-ops until app.environment lands).
     setWeather: (mode, intensity) => app.environment?.setWeather?.(mode, intensity),
     get weather() {

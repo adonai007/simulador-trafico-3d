@@ -238,6 +238,21 @@ export const CONFIG = {
     coneEveryM: 1.1,         // cone spacing along the closure barrier
   },
 
+  // ---- Ruteo sensible a congestión (V6 R1) — default OFF ----
+  // When `enabled` is false the periodic rebuild never runs and routing uses
+  // the free-flow tables unchanged (zero behavioral change). When ON, every
+  // `rebuildEveryS` sim-seconds the budgeted routing builder (the same one
+  // closures use) recomputes next-hop tables with edge costs scaled by a
+  // congestion penalty derived from each edge's live `_speedRatio` EWMA:
+  // penalty = 1 + alpha·max(0,1−ratio)^gamma, clamped to [1, maxPenalty].
+  routing: {
+    congestionEnabled: false, // initial «Ruteo por congestión» checkbox state
+    rebuildEveryS: 15,        // sim-time cadence between congestion rebuilds
+    alpha: 2.5,               // penalty strength (cost ≈ ×(1+alpha) when fully jammed)
+    gamma: 1.5,               // deficit exponent (>1 ignores light slowdowns)
+    maxPenalty: 6,            // hard clamp on the per-edge cost multiplier
+  },
+
   // ---- Incidentes: vehículo fantasma detenido (V3 C1) ----
   incidents: {
     durationS: 90,           // default incident lifetime (sim s)

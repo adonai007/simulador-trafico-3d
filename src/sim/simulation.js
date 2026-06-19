@@ -81,6 +81,27 @@ export function createSimulation(network) {
   let routingVersion = 0; // bumped on every routing table swap
   let pendingRoutingBuilder = null; // chunked rebuild in flight (double buffer)
 
+  // ---- Congestion-sensitive routing (V6 R1) — default OFF ----
+  // routingCfg fallback keeps the module green if the config block is absent
+  // (closuresCfg pattern). `congestionRouting` is the live flag; while ON the
+  // step() loop kicks a congestion-weighted rebuild every routingCfg.rebuildEveryS
+  // sim-seconds through the SAME budgeted builder closures use. The rebuild
+  // reads each edge's `_speedRatio` (detectors EWMA) as the congestion signal,
+  // so it must be gated to NOT clobber a closure rebuild already in flight.
+  const routingCfg = CONFIG.routing ?? {
+    congestionEnabled: false, rebuildEveryS: 15, alpha: 2.5, gamma: 1.5, maxPenalty: 6,
+  };
+  // Penalty params snapshot handed to the builder (stable object, mutated never).
+  const congestionParams = {
+    enabled: false,
+    alpha: routingCfg.alpha,
+    gamma: routingCfg.gamma,
+    maxPenalty: routingCfg.maxPenalty,
+  };
+  let congestionRouting = routingCfg.congestionEnabled === true;
+  let nextCongestionRebuildT = routingCfg.rebuildEveryS; // first rebuild after one period
+  let congestionRebuilds = 0; // completed congestion-weighted swaps (e2e hook)
+
   // ---- Stats: trip accumulators + metrics history ring (V5 E2a) ----
   // statsCfg fallback keeps the module green if the config block is absent
   // (busCfg/closuresCfg pattern). All accumulators are plain numbers /
@@ -502,12 +523,19 @@ export function createSimulation(network) {
     return twin ? [e.id, twin.id] : [e.id];
   }
 
+  let pendingIsCongestion = false; // R1: the in-flight rebuild is congestion-weighted
+
   /** Atomic swap of the double-buffered tables + re-resolve routed vehicles. */
   function finishRoutingSwap(builder) {
     routing = builder.finish();
     network.routing = routing; // keep the shared network reference fresh
     pendingRoutingBuilder = null;
     routingVersion++;
+    // R1: count completed congestion-weighted swaps (e2e hook) and clear the tag.
+    if (pendingIsCongestion) {
+      congestionRebuilds++;
+      pendingIsCongestion = false;
+    }
     // Vehicles on real lanes re-resolve against the new tables NOW; vehicles
     // on connectors re-resolve on landing (enterSegment -> setRouteForLane).
     for (let i = 0; i < vehicles.length; i++) {
@@ -525,9 +553,14 @@ export function createSimulation(network) {
    */
   function applyClosures() {
     closuresDirty = false;
+    // R1: a closure rebuild adopts the CURRENT congestion setting so toggling a
+    // closure while congestion routing is ON never momentarily drops weighting.
+    congestionParams.enabled = congestionRouting;
+    pendingIsCongestion = false; // a closure rebuild is attributed to closures, not R1
     const builder = createRoutingBuilder(
       network,
-      closedEdges.size > 0 ? closedEdges : null
+      closedEdges.size > 0 ? closedEdges : null,
+      congestionRouting ? congestionParams : null
     );
     const t0 = performance.now();
     let done = builder.build(1);
@@ -536,6 +569,33 @@ export function createSimulation(network) {
     }
     if (done) finishRoutingSwap(builder);
     else pendingRoutingBuilder = builder; // continue on the following steps
+  }
+
+  /**
+   * R1: start a congestion-weighted routing rebuild on the periodic cadence.
+   * Reuses the budgeted builder (sync within recomputeBudgetMs, else chunked
+   * into the double buffer exactly like closures). Skipped while another
+   * rebuild (closure OR congestion) is already in flight, and respects any
+   * active closures. The OLD tables stay live and safe until the swap, so the
+   * sim never stalls. Returns true if a rebuild was kicked off.
+   */
+  function startCongestionRebuild() {
+    if (pendingRoutingBuilder !== null) return false; // a rebuild is already running
+    congestionParams.enabled = true;
+    pendingIsCongestion = true;
+    const builder = createRoutingBuilder(
+      network,
+      closedEdges.size > 0 ? closedEdges : null,
+      congestionParams
+    );
+    const t0 = performance.now();
+    let done = builder.build(1);
+    while (!done && performance.now() - t0 < closuresCfg.recomputeBudgetMs) {
+      done = builder.build(1);
+    }
+    if (done) finishRoutingSwap(builder);
+    else pendingRoutingBuilder = builder; // continue chunked on following steps
+    return true;
   }
 
   // ---- Incidents (V3 C1, D1: phantom vehicle in lane.vehicles ONLY) ----
@@ -1170,6 +1230,10 @@ export function createSimulation(network) {
   function step(dt) {
     const t0 = performance.now();
     // C1 (D2): closures apply COALESCED at step start — never mid-decide.
+    // R1 (V6): congestion-weighted rebuilds reuse the same budgeted machinery,
+    // on a sim-time cadence, with strictly lower priority than closures and
+    // than finishing a rebuild already in flight (so a pending build never
+    // restarts mid-stream and closures always win the buffer).
     if (closuresDirty) {
       applyClosures();
     } else if (
@@ -1177,6 +1241,13 @@ export function createSimulation(network) {
       pendingRoutingBuilder.build(closuresCfg.chunkExitsPerStep)
     ) {
       finishRoutingSwap(pendingRoutingBuilder);
+    } else if (
+      congestionRouting &&
+      pendingRoutingBuilder === null &&
+      time >= nextCongestionRebuildT
+    ) {
+      nextCongestionRebuildT = time + routingCfg.rebuildEveryS;
+      startCongestionRebuild();
     }
     // 0) snapshot step-start state for render interpolation (§2.1).
     for (let i = 0; i < vehicles.length; i++) {
@@ -1361,6 +1432,44 @@ export function createSimulation(network) {
     },
     get routingVersion() {
       return routingVersion;
+    },
+    // ---- Congestion-sensitive routing (V6 R1) ----
+    /**
+     * Toggle congestion-sensitive routing. ON: schedules a congestion-weighted
+     * rebuild on the next cadence tick (immediately, since the timer is reset to
+     * `time`). OFF: restores free-flow routing by kicking ONE plain (free-flow,
+     * closure-aware) rebuild now, so behavior returns to the unchanged tables.
+     */
+    setCongestionRouting(b) {
+      const on = !!b;
+      if (on === congestionRouting) return;
+      congestionRouting = on;
+      if (on) {
+        nextCongestionRebuildT = time; // rebuild on the next step
+      } else if (pendingRoutingBuilder === null) {
+        // Restore free-flow tables immediately (closure-aware, congestion off).
+        congestionParams.enabled = false;
+        pendingIsCongestion = false;
+        const builder = createRoutingBuilder(
+          network,
+          closedEdges.size > 0 ? closedEdges : null,
+          null
+        );
+        const t0 = performance.now();
+        let done = builder.build(1);
+        while (!done && performance.now() - t0 < closuresCfg.recomputeBudgetMs) {
+          done = builder.build(1);
+        }
+        if (done) finishRoutingSwap(builder);
+        else pendingRoutingBuilder = builder;
+      }
+    },
+    get congestionRouting() {
+      return congestionRouting;
+    },
+    /** Completed congestion-weighted table swaps (e2e hook). */
+    get congestionRebuilds() {
+      return congestionRebuilds;
     },
     // --- E1: sim public hooks ---
     /** Spawn one ambulance (GUI «Llamar ambulancia»). Returns id, or null at cap. */

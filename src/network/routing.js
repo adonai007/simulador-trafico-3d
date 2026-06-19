@@ -20,8 +20,31 @@
 // next-hops OUT, while it can never be an intermediate. `exits` is filtered
 // of closed edges. `createRoutingBuilder` exposes the same build split into
 // per-exit chunks for the budgeted, double-buffered rebuild in simulation.js.
+//
+// V6 R1 congestion-sensitive routing (default OFF): the optional third arg
+// `congestion` scales the PREV-edge traversal time by a penalty derived from
+// that edge's live `_speedRatio` (the detectors EWMA, 1 = free flow). With it
+// disabled (or absent) the penalty is exactly 1 for every edge, so the tables
+// are byte-for-byte identical to free-flow routing — zero behavioral change.
+// The penalty is captured per build (Dijkstra needs a static edge-cost
+// snapshot); simulation.js triggers periodic congestion-weighted rebuilds on a
+// sim-time cadence through the very same budgeted builder used for closures.
 
 import { CONFIG } from '../config.js';
+
+/**
+ * Congestion penalty for one edge: 1 + alpha · max(0, 1 − ratio)^gamma, clamped
+ * to [1, maxPenalty]. ratio ≈ 1 (free flow) → ≈ 1 (no detour); ratio → 0
+ * (jammed) → up to maxPenalty, biasing Dijkstra to route around the jam.
+ * Monotonic and bounded so a temporarily over-1 ratio (v0 jitter, downhill)
+ * never lowers cost below free-flow.
+ */
+export function congestionPenalty(speedRatio, cfg) {
+  const deficit = 1 - (speedRatio > 1 ? 1 : speedRatio);
+  if (deficit <= 0) return 1;
+  const p = 1 + cfg.alpha * Math.pow(deficit, cfg.gamma);
+  return p > cfg.maxPenalty ? cfg.maxPenalty : p;
+}
 
 /** Minimal binary min-heap on parallel arrays (build-time only). */
 function createHeap() {
@@ -75,8 +98,16 @@ function createHeap() {
  * The result Maps are FRESH (double buffer): the live routing object stays
  * untouched until the caller atomically swaps in `finish()`.
  */
-export function createRoutingBuilder(graph, closedSet = null) {
+export function createRoutingBuilder(graph, closedSet = null, congestion = null) {
   const edges = graph.edges;
+
+  // V6 R1: congestion-weighted edge cost (default OFF → penalty 1 everywhere,
+  // identical to free-flow). The penalty multiplies ONLY the prev-edge
+  // traversal time; connector cost is left at free flow (turn movements carry
+  // no detector signal). Captured once per build so Dijkstra sees a static cost
+  // field. cCfg holds {alpha, gamma, maxPenalty}.
+  const congestionOn = congestion !== null && congestion.enabled === true;
+  const cCfg = congestion;
 
   // Reverse adjacency from connectors: revAdj.get(edgeB) = predecessors
   // [{prev, w, m}] where w/m = cost/meters of traversing prev edge + the
@@ -86,7 +117,8 @@ export function createRoutingBuilder(graph, closedSet = null) {
   for (const e of edges.values()) revAdj.set(e.id, []);
   const best = new Map(); // "in_out" -> record
   for (const e of edges.values()) {
-    const eCost = e.lengthM / Math.max(e.speedMs, 0.5);
+    let eCost = e.lengthM / Math.max(e.speedMs, 0.5);
+    if (congestionOn) eCost *= congestionPenalty(e._speedRatio ?? 1, cCfg);
     for (const lane of e.lanes) {
       for (const c of lane.outConnectors) {
         if (closedSet !== null && closedSet.has(c.outEdgeId)) continue; // never INTO closed
@@ -197,8 +229,8 @@ export function createRoutingBuilder(graph, closedSet = null) {
   };
 }
 
-export function buildRouting(graph, closedSet = null) {
-  const b = createRoutingBuilder(graph, closedSet);
+export function buildRouting(graph, closedSet = null, congestion = null) {
+  const b = createRoutingBuilder(graph, closedSet, congestion);
   b.build(Infinity);
   return b.finish();
 }
